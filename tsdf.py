@@ -2,11 +2,13 @@ import numpy as np
 from params import *
 from timeit import default_timer as timer
 from numba import cuda
+import numba as nb
 
 threadsperblock = VOXEL_RES
+mm_threadsperblock = 128
 
 @cuda.jit
-def tsdf_kernel(vox_ori,voxel_len,l,r,t,b,trunc_dis_inv,i,o):
+def tsdf_kernel(vox_ori,voxel_len,l,r,t,b,trunc_dis,i,o):
     b_w = r-l
     x = cuda.threadIdx.x
     y = cuda.blockIdx.x
@@ -25,10 +27,52 @@ def tsdf_kernel(vox_ori,voxel_len,l,r,t,b,trunc_dis_inv,i,o):
     pix_depth = i[idx]
     if pix_depth == 0:
         return
-    diff = (pix_depth - vox_depth)*trunc_dis_inv
+    diff = (pix_depth - vox_depth)/trunc_dis
     if diff >= 1 or diff <= -1:
         return
     o[z, y, x] = diff
+
+
+@cuda.jit
+def min_max_kernel(l,r,t,b,a,o):
+    b_w = r-l
+    tid = cuda.threadIdx.x
+    min_p = cuda.shared.array(shape=(mm_threadsperblock,3), dtype=nb.types.float32)
+    max_p = cuda.shared.array(shape=(mm_threadsperblock,3), dtype=nb.types.float32)
+    pos = cuda.grid(1)
+    x = pos % b_w + l
+    y = pos / b_w + t
+    cam_z = a[pos]
+    if cam_z == 0:
+        min_p[tid][0],min_p[tid][1],min_p[tid][2] = 99999,99999,99999
+        max_p[tid][0],max_p[tid][1],max_p[tid][2] = -99999,-99999,-99999
+    else:
+        q = cam_z / FOCAL
+        cam_x = q * (x - CENTER_X)
+        cam_y = -q * (y - CENTER_Y)  # change to right hand axis
+        cam_z = -cam_z
+        min_p[tid][0], min_p[tid][1], min_p[tid][2] = cam_x, cam_y, cam_z
+        max_p[tid][0], max_p[tid][1], max_p[tid][2] = cam_x, cam_y, cam_z
+    cuda.syncthreads()
+    s = 1
+    while s < cuda.blockDim.x:
+        index = 2 * s * tid
+        if index + s < cuda.blockDim.x:
+            min_p[index][0] = min(min_p[index + s][0], min_p[index][0])
+            min_p[index][1] = min(min_p[index + s][1], min_p[index][1])
+            min_p[index][2] = min(min_p[index + s][2], min_p[index][2])
+            max_p[index][0] = max(max_p[index + s][0], max_p[index][0])
+            max_p[index][1] = max(max_p[index + s][1], max_p[index][1])
+            max_p[index][2] = max(max_p[index + s][2], max_p[index][2])
+        s *= 2
+        cuda.syncthreads()
+    if tid == 0:
+        o[cuda.blockIdx.x][0] = min_p[0][0]
+        o[cuda.blockIdx.x][1] = min_p[0][1]
+        o[cuda.blockIdx.x][2] = min_p[0][2]
+        o[cuda.blockIdx.x][3] = max_p[0][0]
+        o[cuda.blockIdx.x][4] = max_p[0][1]
+        o[cuda.blockIdx.x][5] = max_p[0][2]
 
 
 def cal_tsdf_cuda(s):
@@ -42,49 +86,41 @@ def cal_tsdf_cuda(s):
     b = s['header'][5]
     b_w = r - l
     b_h = b - t
-    p_clouds = []
-    minx = miny = minz = 99999
-    maxx = maxy = maxz = -99999
-    for y in range(t, b):
-        for x in range(l, r):
-            idx = (y - t) * b_w + x - l
-            cam_z = s['data'][idx]
-            if cam_z == 0:
-                continue
-            q = cam_z / FOCAL
-            cam_x = q * (x - CENTER_X)
-            cam_y = -q * (y - CENTER_Y)  # change to right hand axis
-            cam_z = -cam_z
-            p_clouds.append([cam_x, cam_y, cam_z])
-            minx = cam_x if cam_x < minx else minx
-            miny = cam_y if cam_y < miny else miny
-            minz = cam_z if cam_z < minz else minz
 
-            maxx = cam_x if cam_x > maxx else maxx
-            maxy = cam_y if cam_y > maxy else maxy
-            maxz = cam_z if cam_z > maxz else maxz
-    print (b - t) * (r - l), "loop 1 iter"
-    npa = np.asarray(p_clouds, dtype=np.float32)
-    min_p = np.array([minx, miny, minz])
-    max_p = np.array([maxx, maxy, maxz])
+    blockdim = (s['data'].size + mm_threadsperblock -1)/mm_threadsperblock
+    d_depth = cuda.to_device(s['data'])
+    d_mm = cuda.device_array([blockdim, 6],dtype=np.float32)
+    min_max_kernel[blockdim,mm_threadsperblock](l,r,t,b,d_depth,d_mm)
+    mm_p = np.empty([blockdim,6],dtype=np.float32)
+    mm_p = d_mm.copy_to_host()
+    min_p = mm_p[0,:3]
+    max_p = mm_p[0,3:6]
+    for i in mm_p:
+        min_p[0] = min(i[0], min_p[0])
+        min_p[1] = min(i[1], min_p[1])
+        min_p[2] = min(i[2], min_p[2])
+        max_p[0] = max(i[3], max_p[0])
+        max_p[1] = max(i[4], max_p[1])
+        max_p[2] = max(i[5], max_p[2])
     mid_p = (min_p + max_p) / 2
     len_e = max_p - min_p
     max_l = np.max(len_e)
     voxel_len = max_l / VOXEL_RES
-    trunc_dis_inv = 1.0/(voxel_len * TRUC_DIS_T)
+    trunc_dis = (voxel_len * TRUC_DIS_T)
     vox_ori = mid_p - max_l / 2 + voxel_len / 2
     t2 = timer()
     d_depth = cuda.to_device(s['data'])
-    d_tsdf = cuda.device_array([VOXEL_RES ,VOXEL_RES , VOXEL_RES])
+    d_tsdf = cuda.device_array([VOXEL_RES ,VOXEL_RES , VOXEL_RES],dtype=np.float32)
     blockspergrid = [VOXEL_RES,VOXEL_RES]
     # tsdf_kernel1[blockspergrid,threadsperblock](vox_ori,voxel_len,l,d_tsdf)
-    tsdf_kernel[blockspergrid,threadsperblock](vox_ori,voxel_len,l,r,t,b,trunc_dis_inv,d_depth,d_tsdf)
+    tsdf_kernel[blockspergrid,threadsperblock](vox_ori,voxel_len,l,r,t,b,trunc_dis,d_depth,d_tsdf)
     label = (label.reshape(-1, 3) - mid_p) / max_l + 0.5
-    tsdf = np.empty([VOXEL_RES ,VOXEL_RES , VOXEL_RES])
+    tsdf = np.empty([VOXEL_RES ,VOXEL_RES , VOXEL_RES],dtype=np.float32)
     tsdf = d_tsdf.copy_to_host()
     t3 = timer()
-    print "time 1: %.4f, time 2: %.4f" % (t2 - t1, t3 - t2)
-    return npa, tsdf, label
+    # print "time 1: %.4f, time 1+2: %.4f" % (t2 - t1, t3 - t1)
+
+    return tsdf, label.reshape(-1)
 
 # return point cloud in camera coordination and tsdf data
 def cal_tsdf(s):
@@ -186,9 +222,10 @@ def get_project_data(s):
 
 
 if __name__ == "__main__":
-    sample = {'header': np.array([320,240,100,100,200,200],dtype=np.int32),
-              'data': np.random.rand(100*100)*100+100}
-    label = np.ones(63)
-    # pc, tsdf, labels = cal_tsdf((sample, label))
-    pc, tsdf, labels = cal_tsdf_cuda((sample, label))
+    pass
+    # sample = {'header': np.array([320,240,100,100,200,200],dtype=np.int32),
+    #           'data': np.random.rand(100*100)*100+100}
+    # label = np.ones(63)
+    # # pc, tsdf, labels = cal_tsdf((sample, label))
+    # tsdf, labels = cal_tsdf_cuda((sample, label))
 

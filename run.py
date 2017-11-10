@@ -29,6 +29,7 @@ def main():
         running_loss = 0.0
         for i, (tsdf, labels) in enumerate(train_loader, 0):
             print "process:",i
+            tsdf.unsqueeze_(1)
             # wrap them in Variable
             inputs, labels = Variable(tsdf), Variable(labels)
             # zero the parameter gradients

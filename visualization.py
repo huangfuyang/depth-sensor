@@ -15,11 +15,14 @@ def plot_tsdf(data, label = None):
 
     if label is not None:
         label = (label * VOXEL_RES).astype(int)
+        label.reshape(-1,3)
         label = label[:,0]+label[:,1]*VOXEL_RES+label[:,2]*VOXEL_RES*VOXEL_RES
         scale[label] = 1.5
     graph.mlab_source.dataset.point_data.vectors = np.repeat(scale, 3).reshape(-1,3)
     graph.mlab_source.dataset.point_data.scalars = data
+    show()
 
 
 def plot_pointcloud(data):
     points3d(data[:,0],data[:,1],data[:,2])
+    show()

@@ -37,12 +37,12 @@ class MSRADataSet(Dataset):
 
         sample = {'header': header,
                   'data': data}
-        pc, tsdf, labels = cal_tsdf_cuda([sample,self.data[item]['label']])
+        tsdf, labels = cal_tsdf_cuda([sample,self.data[item]['label']])
+
         # if self.transform:
         #     sample = self.transform(sample)
 
         # return sample, self.data[item]['label']
-
         return tsdf,labels
 
     def __len__(self):
@@ -50,16 +50,15 @@ class MSRADataSet(Dataset):
 
 
 if __name__ == "__main__":
-    t1 = time()
     m = MSRADataSet('/home/hfy/data/msra15/')
-    t2 = time()
     for i in range(100):
         data,label = m[0]
-    t3 = time()
+    # data,label = m[0]
 
     # pc_p = get_project_data(m[0][0])
     # plot_pointcloud(pc)
-    # plot_tsdf(data.numpy(),label.numpy())
+    # from visualization import plot_tsdf
+
+    # plot_tsdf(data,label)
     # t4 = time()
     # print t2-t1,t3-t2,t4-t3
-    # show()

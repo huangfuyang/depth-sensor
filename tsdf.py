@@ -1,8 +1,8 @@
 import numpy as np
+import numba as nb
 from params import *
 from timeit import default_timer as timer
 from numba import cuda
-import numba as nb
 
 threadsperblock = VOXEL_RES
 mm_threadsperblock = 128
@@ -86,7 +86,6 @@ def cal_tsdf_cuda(s):
     b = s['header'][5]
     b_w = r - l
     b_h = b - t
-
     blockdim = (s['data'].size + mm_threadsperblock -1)/mm_threadsperblock
     d_depth = cuda.to_device(s['data'])
     d_mm = cuda.device_array([blockdim, 6],dtype=np.float32)
@@ -112,19 +111,40 @@ def cal_tsdf_cuda(s):
     d_depth = cuda.to_device(s['data'])
     d_tsdf = cuda.device_array([VOXEL_RES ,VOXEL_RES , VOXEL_RES],dtype=np.float32)
     blockspergrid = [VOXEL_RES,VOXEL_RES]
-    # tsdf_kernel1[blockspergrid,threadsperblock](vox_ori,voxel_len,l,d_tsdf)
     tsdf_kernel[blockspergrid,threadsperblock](vox_ori,voxel_len,l,r,t,b,trunc_dis,d_depth,d_tsdf)
     label = (label.reshape(-1, 3) - mid_p) / max_l + 0.5
+    label[label<0] = 0
+    label[label>=1] = 1
     tsdf = np.empty([VOXEL_RES ,VOXEL_RES , VOXEL_RES],dtype=np.float32)
     tsdf = d_tsdf.copy_to_host()
     t3 = timer()
     # print "time 1: %.4f, time 1+2: %.4f" % (t2 - t1, t3 - t1)
 
-    return tsdf, label.reshape(-1)
+    return tsdf, label.reshape(-1), (mid_p,max_l)
+
+def cal_pointcloud(s):
+    l = s['header'][2]
+    t = s['header'][3]
+    r = s['header'][4]
+    b = s['header'][5]
+    b_w = r - l
+    p_clouds = []
+    for y in range(t, b):
+        for x in range(l, r):
+            idx = (y - t) * b_w + x - l
+            cam_z = s['data'][idx]
+            if cam_z == 0:
+                continue
+            q = cam_z / FOCAL
+            cam_x = q * (x - CENTER_X)
+            cam_y = -q * (y - CENTER_Y)  # change to right hand axis
+            cam_z = -cam_z
+            p_clouds.append([cam_x, cam_y, cam_z])
+    npa = np.asarray(p_clouds, dtype=np.float32)
+    return npa
 
 # return point cloud in camera coordination and tsdf data
 def cal_tsdf(s):
-    t1 = timer()
     s, label = s
     w = s['header'][0]
     h = s['header'][1]
@@ -155,7 +175,6 @@ def cal_tsdf(s):
             maxx = cam_x if cam_x > maxx else maxx
             maxy = cam_y if cam_y > maxy else maxy
             maxz = cam_z if cam_z > maxz else maxz
-    print (b-t)*(r-l),"loop 1 iter"
     npa = np.asarray(p_clouds,dtype=np.float32)
     min_p = np.array([minx,miny,minz],dtype=np.float32)
     max_p = np.array([maxx,maxy,maxz],dtype=np.float32)
@@ -166,10 +185,8 @@ def cal_tsdf(s):
     trunc_dis = voxel_len*TRUC_DIS_T
     vox_ori = mid_p-max_l/2+voxel_len/2
     tsdf = np.ones((VOXEL_RES,VOXEL_RES,VOXEL_RES))
-    t2 = timer()
 
-
-    print VOXEL_RES*VOXEL_RES*VOXEL_RES,"loop 2 iter"
+    # print VOXEL_RES*VOXEL_RES*VOXEL_RES,"loop 2 iter"
     for z in range(VOXEL_RES):
         for y in range(VOXEL_RES):
             for x in range(VOXEL_RES):
@@ -191,11 +208,7 @@ def cal_tsdf(s):
                 tsdf[z,y,x] = diff
 
     label = (label.reshape(-1,3) - mid_p)/max_l+0.5
-
-    t3 = timer()
-
-    print "time 1: %.4f, time 2: %.4f" % (t2-t1,t3-t2)
-    return npa,tsdf,label
+    return tsdf,label.reshape(-1)
 
 
 # point cloud in image coordination

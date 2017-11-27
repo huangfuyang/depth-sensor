@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 from torch.utils.data import Dataset,DataLoader
+from sensor import cal_angle_from_pos
 import os,glob
 from params import *
 from tsdf import *
@@ -13,13 +14,14 @@ import warnings
 # ring_pip, ring_dip, ring_tip, little_mcp, little_pip, little_dip, little_tip, thumb_mcp, thumb_pip,
 # thumb_dip, thumb_tip
 class MSRADataSet(Dataset):
-    def __init__(self,root_path):
+    def __init__(self,root_path, use_sensor=False):
         self.root_path = root_path
         self.subjects = filter(lambda x: os.path.isdir(os.path.join(root_path, x)), os.listdir(root_path))
         self.gestures = GESTURES
         self.samples = []
         self.subjects_length = []
         self.imgs = []
+        self.use_sensor = use_sensor
         for i in range(MAX_SAMPLE_LEN):
             self.samples.append('{:06d}'.format(i)+DATA_EXT)
             self.imgs.append('{:06d}'.format(i)+IMG_EXT)
@@ -54,7 +56,11 @@ class MSRADataSet(Dataset):
 
         try:
             tsdf, labels, (mid_p, max_l) = cal_tsdf_cuda([sample, self.data[item]['label']])
-            return tsdf, labels, (mid_p, max_l)
+            if self.use_sensor:
+                angles = cal_angle_from_pos(labels.copy())
+                return (tsdf,angles), labels, (mid_p, max_l)
+            else:
+                return tsdf, labels, (mid_p, max_l)
         except Warning as w:
             print w, labels
             return None
@@ -98,7 +104,7 @@ if __name__ == "__main__":
         t = time()
         pc, label = m.get_point_cloud(i)
         plot_pointcloud(pc, label)
-        data, label = m[i]
+        data, label,(mid,max_p) = m[i]
         plot_tsdf(data,label)
 
         print time()-t

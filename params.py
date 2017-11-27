@@ -28,5 +28,5 @@ BATCH_SIZE = 32
 PRINT_FREQ = 5
 
 # test params
-ERROR_THRESH = 20.0 # 10mm
+ERROR_THRESH = 30.0 # 10mm
 

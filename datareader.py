@@ -62,7 +62,7 @@ class MSRADataSet(Dataset):
             else:
                 return tsdf, labels, (mid_p, max_l)
         except Warning as w:
-            print w, labels
+            print (w, labels)
             return None
 
     def get_point_cloud(self, index):
@@ -107,7 +107,7 @@ if __name__ == "__main__":
         data, label,(mid,max_p) = m[i]
         plot_tsdf(data,label)
 
-        print time()-t
+        print (time()-t)
     # data,label = m[0]
 
     # pc_p = get_project_data(m[0][0])

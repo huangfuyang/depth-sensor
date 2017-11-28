@@ -86,7 +86,7 @@ def cal_tsdf_cuda(s):
     b = s['header'][5]
     b_w = r - l
     b_h = b - t
-    blockdim = (s['data'].size + mm_threadsperblock -1)/mm_threadsperblock
+    blockdim = int((s['data'].size + mm_threadsperblock -1)/mm_threadsperblock)
     d_depth = cuda.to_device(s['data'])
     d_mm = cuda.device_array([blockdim, 6],dtype=np.float32)
     min_max_kernel[blockdim,mm_threadsperblock](l,r,t,b,d_depth,d_mm)

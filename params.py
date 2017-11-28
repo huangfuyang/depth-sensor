@@ -19,13 +19,13 @@ CENTER_X = 160
 CENTER_Y = 120
 
 # train params. default value will be changed by passing args in console
-DATA_DIR = '/home/hfy/data/msra15/'
+DATA_DIR = '/home/alzeng/dataset/cvpr15_MSRAHandGestureDB/'
 LEARNING_RATE = 0.1
 MOMENTUM = 0.9
 EPOCH_COUNT = 20
 WEIGHT_DECAY = 0.0005
-BATCH_SIZE = 32
-PRINT_FREQ = 5
+BATCH_SIZE = 64
+PRINT_FREQ = 10
 
 # test params
 ERROR_THRESH = 30.0 # 10mm

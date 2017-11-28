@@ -63,6 +63,7 @@ def main():
         net = HandSensorNet()
     else:
         net = HandNet()
+    torch.cuda.set_device(0)
     net.cuda()
     criterion = nn.MSELoss().cuda()
     best_acc = 0
@@ -120,10 +121,10 @@ def main():
             'optimizer': optimizer.state_dict(),
         }, is_best)
     print('Finished Training')
-    print 'evaluating test dataset'
+    print('evaluating test dataset')
     acc = test(test_loader,net,criterion)
-    print "final accuracy {:3f}".format(acc)
-    print "total time: ",datetime.timedelta(seconds=(time()-start_time))
+    print("final accuracy {:3f}".format(acc))
+    print("total time: ",datetime.timedelta(seconds=(time()-start_time)))
 
 
 def train(train_loader, model, criterion, optimizer, epoch):
@@ -239,7 +240,7 @@ def visualize_result(model_path, data_path):
     checkpoint = torch.load(model_path)
     # args.start_epoch = checkpoint['epoch']
     best_acc = checkpoint['best_acc']
-    print "using model with acc [{:.2f}%]".format(best_acc)
+    print ("using model with acc [{:.2f}%]".format(best_acc))
     net.load_state_dict(checkpoint['state_dict'])
     net.eval()
     for i in range(100,200):
@@ -253,7 +254,7 @@ def visualize_result(model_path, data_path):
         output = net(input_var)
         output = output.data.squeeze(0).numpy().reshape(-1,3)
         output = ((output-0.5)*max_l+mid_p).reshape(-1)
-        print accuracy_portion(output, label)
+        print (accuracy_portion(output, label))
         plot_pointcloud(pc, label)
         plot_pointcloud(pc, output)
 
@@ -285,7 +286,7 @@ def test_only(model_path, test_id = 0):
     criterion = nn.MSELoss().cuda()
     checkpoint = torch.load(model_path)
     best_acc = checkpoint['best_acc']
-    print "using model with acc [{:.2f}%]".format(best_acc)
+    print ("using model with acc [{:.2f}%]".format(best_acc))
     net.load_state_dict(checkpoint['state_dict'])
     net.eval()
 
@@ -300,8 +301,8 @@ def test_only(model_path, test_id = 0):
                                                   batch_size=BATCH_SIZE,
                                                   num_workers=0)
     acc = test(test_loader, net, criterion)
-    print "final accuracy {:3f}".format(acc)
-    print "total time: ", datetime.timedelta(seconds=(time() - start_time))
+    print ("final accuracy {:3f}".format(acc))
+    print ("total time: ", datetime.timedelta(seconds=(time() - start_time)))
 
 
 if __name__ == "__main__":

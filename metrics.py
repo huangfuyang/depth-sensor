@@ -52,5 +52,8 @@ def mean_error(output,target, max_l):
     sqr_sum = torch.sum(torch.pow(diff, 2), 2)
     sqrt_row = torch.sqrt(sqr_sum)
     # print torch.sum(sqrt_row,0)/batch_size
-    out = torch.sum(sqrt_row)
-    return out/(sqrt_row.size(0)*sqrt_row.size(1))
+    # out = torch.sum(sqrt_row)
+    if batch_size != 0:
+        return torch.sum(sqrt_row,0)/batch_size
+    else:
+        return 0

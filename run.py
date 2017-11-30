@@ -51,7 +51,9 @@ def init_parser():
     global args
     args = parser.parse_args()
 
+
 def warning_init():
+    warnings.filterwarnings("error")
     np.seterr(all='warn')
 
 
@@ -86,15 +88,21 @@ def main():
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     dataset = MSRADataSet(args.data,USE_SENSOR)
-
+    for i in range(len(dataset)):
+        dataset[i]
+    return
     train_idx, valid_idx = dataset.get_train_test_indices()
 
-    train_sampler = SubsetRandomSampler(train_idx)
+    # train_sampler = SubsetRandomSampler(train_idx)
     test_sampler = SubsetRandomSampler(valid_idx)
 
     train_loader = torch.utils.data.DataLoader(dataset,
-                                               batch_size=args.batch_size, sampler=train_sampler,
+                                               batch_size=args.batch_size,
                                                num_workers=0)
+
+    # train_loader = torch.utils.data.DataLoader(dataset,
+    #                                            batch_size=args.batch_size, sampler=train_sampler,
+    #                                            num_workers=0)
 
     test_loader = torch.utils.data.DataLoader(dataset,
                                                batch_size=args.batch_size, sampler=test_sampler,
@@ -121,9 +129,9 @@ def main():
         }, is_best)
     print('Finished Training')
     print 'evaluating test dataset'
-    acc = test(test_loader,net,criterion)
-    print "final accuracy {:3f}".format(acc)
-    print "total time: ",datetime.timedelta(seconds=(time()-start_time))
+    # acc = test(test_loader,net,criterion)
+    # print "final accuracy {:3f}".format(acc)
+    # print "total time: ",datetime.timedelta(seconds=(time()-start_time))
 
 
 def train(train_loader, model, criterion, optimizer, epoch):
@@ -131,7 +139,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     data_time = AverageMeter()
     losses = AverageMeter()
     acc_in_t = AverageMeter()
-
+    mean_err = AverageMeter()
     # switch to train mode
     model.train()
 
@@ -142,27 +150,27 @@ def train(train_loader, model, criterion, optimizer, epoch):
         if USE_SENSOR:
             tsdf, angles = tsdf
             input_sensor_var = torch.autograd.Variable(angles.cuda())
-        tsdf = tsdf.unsqueeze_(1).cuda()
-        target = target.cuda()
-        input_var = torch.autograd.Variable(tsdf)
-        target_var = torch.autograd.Variable(target)
-
-        # compute output
-        if USE_SENSOR:
-            output = model((input_var,input_sensor_var))
-        else:
-            output = model(input_var)
-        loss = criterion(output, target_var)
-
-        # measure accuracy and record loss
-        err_t = accuracy_error_thresh_portion_batch(output.data, target,max_l)
-        losses.update(loss.data[0], tsdf.size(0))
-        acc_in_t.update(err_t)
-
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        # tsdf = tsdf.unsqueeze_(1).cuda()
+        # target = target.cuda()
+        # input_var = torch.autograd.Variable(tsdf)
+        # target_var = torch.autograd.Variable(target)
+        #
+        # # compute output
+        # if USE_SENSOR:
+        #     output = model((input_var,input_sensor_var))
+        # else:
+        #     output = model(input_var)
+        # loss = criterion(output, target_var)
+        #
+        # # measure accuracy and record loss
+        # err_t = accuracy_error_thresh_portion_batch(output.data, target,max_l)
+        # losses.update(loss.data[0], tsdf.size(0))
+        # acc_in_t.update(err_t)
+        #
+        # # compute gradient and do SGD step
+        # optimizer.zero_grad()
+        # loss.backward()
+        # optimizer.step()
 
         # measure elapsed time
         batch_time.update(time() - end)
@@ -183,6 +191,7 @@ def test(test_loader, model, criterion):
     batch_time = AverageMeter()
     losses = AverageMeter()
     acc_in_t = AverageMeter()
+    mean_errs = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
@@ -200,7 +209,8 @@ def test(test_loader, model, criterion):
 
         # measure accuracy and record loss
         err_t = good_frame(output.data, target, max_l)
-        err_t = mean_error(output.data, target, max_l)
+        mean_err = mean_error(output.data, target, max_l)
+        mean_errs.update(mean_err)
         losses.update(loss.data[0], tsdf.size(0))
         acc_in_t.update(err_t)
 
@@ -209,6 +219,7 @@ def test(test_loader, model, criterion):
         end = time()
 
         if i % PRINT_FREQ == 0:
+            print mean_errs.avg.cpu().numpy()
             print('Test: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
@@ -308,5 +319,6 @@ if __name__ == "__main__":
     # output = ((output - 1) * max_l + mid_p).reshape(batch,-1)
     # print output
     main()
+    # test_only('model_best.pth.tar')
     # test_only('model_best80.pth.tar')
     # visualize_result('model_best.pth.tar',DATA_DIR)

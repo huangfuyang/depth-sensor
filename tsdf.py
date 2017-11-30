@@ -43,7 +43,7 @@ def min_max_kernel(l,r,t,b,a,o):
     x = pos % b_w + l
     y = pos / b_w + t
     cam_z = a[pos]
-    if cam_z == 0:
+    if abs(cam_z) < 0.1:
         min_p[tid][0],min_p[tid][1],min_p[tid][2] = 99999,99999,99999
         max_p[tid][0],max_p[tid][1],max_p[tid][2] = -99999,-99999,-99999
     else:
@@ -57,7 +57,7 @@ def min_max_kernel(l,r,t,b,a,o):
     s = 1
     while s < cuda.blockDim.x:
         index = 2 * s * tid
-        if index + s < cuda.blockDim.x:
+        if index+s < cuda.blockDim.x:
             min_p[index][0] = min(min_p[index + s][0], min_p[index][0])
             min_p[index][1] = min(min_p[index + s][1], min_p[index][1])
             min_p[index][2] = min(min_p[index + s][2], min_p[index][2])
@@ -76,51 +76,58 @@ def min_max_kernel(l,r,t,b,a,o):
 
 
 def cal_tsdf_cuda(s):
-    t1 = timer()
-    s, label = s
-    w = s['header'][0]
-    h = s['header'][1]
-    l = s['header'][2]
-    t = s['header'][3]
-    r = s['header'][4]
-    b = s['header'][5]
-    b_w = r - l
-    b_h = b - t
-    blockdim = (s['data'].size + mm_threadsperblock -1)/mm_threadsperblock
-    d_depth = cuda.to_device(s['data'])
-    d_mm = cuda.device_array([blockdim, 6],dtype=np.float32)
-    min_max_kernel[blockdim,mm_threadsperblock](l,r,t,b,d_depth,d_mm)
-    mm_p = np.empty([blockdim,6],dtype=np.float32)
-    mm_p = d_mm.copy_to_host()
-    min_p = mm_p[0,:3]
-    max_p = mm_p[0,3:6]
-    for i in mm_p:
-        min_p[0] = min(i[0], min_p[0])
-        min_p[1] = min(i[1], min_p[1])
-        min_p[2] = min(i[2], min_p[2])
-        max_p[0] = max(i[3], max_p[0])
-        max_p[1] = max(i[4], max_p[1])
-        max_p[2] = max(i[5], max_p[2])
-    mid_p = (min_p + max_p) / 2
-    len_e = max_p - min_p
-    max_l = np.max(len_e)
-    voxel_len = max_l / VOXEL_RES
-    trunc_dis = (voxel_len * TRUC_DIS_T)
-    vox_ori = mid_p - max_l / 2 + voxel_len / 2
-    t2 = timer()
-    d_depth = cuda.to_device(s['data'])
-    d_tsdf = cuda.device_array([VOXEL_RES ,VOXEL_RES , VOXEL_RES],dtype=np.float32)
-    blockspergrid = [VOXEL_RES,VOXEL_RES]
-    tsdf_kernel[blockspergrid,threadsperblock](vox_ori,voxel_len,l,r,t,b,trunc_dis,d_depth,d_tsdf)
-    label = (label.reshape(-1, 3) - mid_p) / max_l + 0.5
-    label[label<0] = 0
-    label[label>=1] = 1
-    tsdf = np.empty([VOXEL_RES ,VOXEL_RES , VOXEL_RES],dtype=np.float32)
-    tsdf = d_tsdf.copy_to_host()
-    t3 = timer()
-    # print "time 1: %.4f, time 1+2: %.4f" % (t2 - t1, t3 - t1)
+    try:
+        t1 = timer()
+        s, label = s
+        w = s['header'][0]
+        h = s['header'][1]
+        l = s['header'][2]
+        t = s['header'][3]
+        r = s['header'][4]
+        b = s['header'][5]
+        b_w = r - l
+        b_h = b - t
 
-    return tsdf, label.reshape(-1), (mid_p,max_l)
+        blockdim = (s['data'].size + mm_threadsperblock -1)/mm_threadsperblock
+        d_depth = cuda.to_device(s['data'])
+        d_mm = cuda.device_array([blockdim, 6],dtype=np.float32)
+        min_max_kernel[blockdim,mm_threadsperblock](l,r,t,b,d_depth,d_mm)
+        mm_p = np.empty([blockdim,6],dtype=np.float32)
+        mm_p = d_mm.copy_to_host()
+        min_p = np.min(mm_p[:,:3],axis=0)
+        max_p = np.max(mm_p[:,3:6],axis=0)
+        mid_p = (min_p + max_p) / 2
+        len_e = max_p - min_p
+        max_l = np.max(len_e)
+        voxel_len = max_l / VOXEL_RES
+        trunc_dis = (voxel_len * TRUC_DIS_T)
+        vox_ori = mid_p - max_l / 2 + voxel_len / 2
+        t2 = timer()
+        d_depth = cuda.to_device(s['data'])
+        d_tsdf = cuda.device_array([VOXEL_RES ,VOXEL_RES , VOXEL_RES],dtype=np.float32)
+        blockspergrid = [VOXEL_RES,VOXEL_RES]
+        tsdf_kernel[blockspergrid,threadsperblock](vox_ori,voxel_len,l,r,t,b,trunc_dis,d_depth,d_tsdf)
+        tsdf = np.empty([VOXEL_RES, VOXEL_RES, VOXEL_RES], dtype=np.float32)
+        tsdf = d_tsdf.copy_to_host()
+
+        label = (label.reshape(-1, 3) - mid_p) / max_l + 0.5
+        label[label<0] = 0
+        label[label>=1] = 1
+        t3 = timer()
+        # print "time 1: %.4f, time 1+2: %.4f" % (t2 - t1, t3 - t1)
+        return tsdf, label.reshape(-1), (mid_p,max_l)
+    except Warning as w:
+        print "warning caught: ", w
+        print "label:",label
+        print "min:",min_p
+        print "max:",max_p
+        print "mid:",mid_p
+        print "len_e",len_e
+        print "max_l",max_l,
+        # print ""
+        return None
+        return tsdf, label.reshape(-1), (mid_p,max_l)
+
 
 def cal_pointcloud(s):
     l = s['header'][2]
@@ -178,6 +185,8 @@ def cal_tsdf(s):
     npa = np.asarray(p_clouds,dtype=np.float32)
     min_p = np.array([minx,miny,minz],dtype=np.float32)
     max_p = np.array([maxx,maxy,maxz],dtype=np.float32)
+    print min_p,max_p
+    return None
     mid_p = (min_p+max_p)/2
     len_e = max_p-min_p
     max_l = np.max(len_e)

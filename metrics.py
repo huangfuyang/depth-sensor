@@ -13,12 +13,10 @@ def accuracy_portion(output, target, t=ERROR_THRESH):
     return good * 100
 
 
-def accuracy_error_thresh_portion_batch(output, target, max_l, t=ERROR_THRESH):
+def accuracy_error_thresh_portion_batch(output, target, t=ERROR_THRESH):
     batch_size = target.size(0)
     sample_size = target.size(1)
-    max_l = max_l.repeat(sample_size).view(batch_size,sample_size).cuda()
-    diff = torch.abs(output-target)
-    diff = torch.mul(diff,max_l).view(batch_size,-1,3)
+    diff = torch.abs(output-target).view(batch_size,-1,3)
     sqr_sum = torch.sum(torch.pow(diff,2),2)
     out = torch.zeros(sqr_sum.size()).cuda()
     t = t**2
@@ -27,12 +25,10 @@ def accuracy_error_thresh_portion_batch(output, target, max_l, t=ERROR_THRESH):
     return good*100
 
 
-def good_frame(output, target, max_l, t = ERROR_THRESH):
+def good_frame(output, target, t = ERROR_THRESH):
     batch_size = target.size(0)
     sample_size = target.size(1)
-    max_l = max_l.repeat(sample_size).view(batch_size, sample_size).cuda()
-    diff = torch.abs(output - target)
-    diff = torch.mul(diff, max_l).view(batch_size, -1, 3)
+    diff = torch.abs(output - target).view(batch_size, -1, 3)
     sqr_sum = torch.sum(torch.pow(diff, 2), 2)
     out = torch.zeros(sqr_sum.size()).cuda()
     t = t ** 2
@@ -43,17 +39,13 @@ def good_frame(output, target, max_l, t = ERROR_THRESH):
     return good * 100
 
 
-def mean_error(output,target, max_l):
+def mean_error(output,target):
     batch_size = target.size(0)
     sample_size = target.size(1)
-    max_l = max_l.repeat(sample_size).view(batch_size, sample_size).cuda()
-    diff = torch.abs(output - target)
-    diff = torch.mul(diff, max_l).view(batch_size, -1, 3)
+    diff = torch.abs(output - target).view(batch_size, -1, 3)
     sqr_sum = torch.sum(torch.pow(diff, 2), 2)
     sqrt_row = torch.sqrt(sqr_sum)
-    # print torch.sum(sqrt_row,0)/batch_size
-    # out = torch.sum(sqrt_row)
     if batch_size != 0:
-        return torch.sum(sqrt_row,0)/batch_size
+        return -torch.mean(sqrt_row)
     else:
         return 0

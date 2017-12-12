@@ -13,6 +13,7 @@ def tsdf_kernel(vox_ori,voxel_len,l,r,t,b,trunc_dis,i,o):
     x = cuda.threadIdx.x
     y = cuda.blockIdx.x
     z = cuda.blockIdx.y
+    # voxel position
     v_x = vox_ori[0]+x * voxel_len
     v_y = vox_ori[1]+y * voxel_len
     v_z = vox_ori[2]+z * voxel_len
@@ -25,7 +26,7 @@ def tsdf_kernel(vox_ori,voxel_len,l,r,t,b,trunc_dis,i,o):
         return
     idx = (pix_y - t) * b_w + pix_x - l
     pix_depth = i[idx]
-    if pix_depth == 0:
+    if abs(pix_depth) < 1:
         return
     diff = (pix_depth - vox_depth)/trunc_dis
     if diff >= 1 or diff <= -1:
@@ -43,7 +44,7 @@ def min_max_kernel(l,r,t,b,a,o):
     x = pos % b_w + l
     y = pos / b_w + t
     cam_z = a[pos]
-    if abs(cam_z) < 0.1:
+    if abs(cam_z) < 1:
         min_p[tid][0],min_p[tid][1],min_p[tid][2] = 99999,99999,99999
         max_p[tid][0],max_p[tid][1],max_p[tid][2] = -99999,-99999,-99999
     else:
@@ -78,7 +79,6 @@ def min_max_kernel(l,r,t,b,a,o):
 def cal_tsdf_cuda(s):
     try:
         t1 = timer()
-        s, label = s
         w = s['header'][0]
         h = s['header'][1]
         l = s['header'][2]
@@ -94,6 +94,8 @@ def cal_tsdf_cuda(s):
         min_max_kernel[blockdim,mm_threadsperblock](l,r,t,b,d_depth,d_mm)
         mm_p = np.empty([blockdim,6],dtype=np.float32)
         mm_p = d_mm.copy_to_host()
+        if True in np.isnan(mm_p[-1]):
+            mm_p = mm_p[:-1]
         min_p = np.min(mm_p[:,:3],axis=0)
         max_p = np.max(mm_p[:,3:6],axis=0)
         mid_p = (min_p + max_p) / 2
@@ -109,24 +111,19 @@ def cal_tsdf_cuda(s):
         tsdf_kernel[blockspergrid,threadsperblock](vox_ori,voxel_len,l,r,t,b,trunc_dis,d_depth,d_tsdf)
         tsdf = np.empty([VOXEL_RES, VOXEL_RES, VOXEL_RES], dtype=np.float32)
         tsdf = d_tsdf.copy_to_host()
-
-        label = (label.reshape(-1, 3) - mid_p) / max_l + 0.5
-        label[label<0] = 0
-        label[label>=1] = 1
         t3 = timer()
         # print "time 1: %.4f, time 1+2: %.4f" % (t2 - t1, t3 - t1)
-        return tsdf, label.reshape(-1), (mid_p,max_l)
-    except Warning as w:
+        return tsdf,max_l,mid_p
+    except RuntimeWarning as w:
         print "warning caught: ", w
-        print "label:",label
         print "min:",min_p
         print "max:",max_p
+        print "minmax:",mm_p
         print "mid:",mid_p
         print "len_e",len_e
         print "max_l",max_l,
         # print ""
         return None
-        return tsdf, label.reshape(-1), (mid_p,max_l)
 
 
 def cal_pointcloud(s):
@@ -152,7 +149,6 @@ def cal_pointcloud(s):
 
 # return point cloud in camera coordination and tsdf data
 def cal_tsdf(s):
-    s, label = s
     w = s['header'][0]
     h = s['header'][1]
     l = s['header'][2]
@@ -170,6 +166,7 @@ def cal_tsdf(s):
             cam_z = s['data'][idx]
             if cam_z == 0:
                 continue
+            # pixel coor -> camera coor
             q = cam_z/FOCAL
             cam_x = q * (x-CENTER_X)
             cam_y = -q * (y-CENTER_Y) # change to right hand axis
@@ -216,8 +213,8 @@ def cal_tsdf(s):
                     continue
                 tsdf[z,y,x] = diff
 
-    label = (label.reshape(-1,3) - mid_p)/max_l+0.5
-    return tsdf,label.reshape(-1)
+    # label = (label.reshape(-1,3) - mid_p)/max_l+0.5
+    return tsdf
 
 
 # point cloud in image coordination

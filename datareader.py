@@ -8,21 +8,25 @@ from params import *
 from tsdf import *
 from time import time
 import warnings
+import tables
 
-# joint  sequence:
+# joint  sequence: 21*3
 # wrist, index_mcp, index_pip, index_dip, index_tip, middle_mcp, middle_pip, middle_dip, middle_tip, ring_mcp,
 # ring_pip, ring_dip, ring_tip, little_mcp, little_pip, little_dip, little_tip, thumb_mcp, thumb_pip,
 # thumb_dip, thumb_tip
 class MSRADataSet(Dataset):
-    def __init__(self,root_path, use_sensor=False):
+    def __init__(self,root_path, use_sensor=False, use_preprocessing = False):
         self.root_path = root_path
         self.subjects = filter(lambda x: os.path.isdir(os.path.join(root_path, x)), os.listdir(root_path))
-        # self.subjects.sort()
+        self.subjects.sort()
         self.gestures = GESTURES
         self.samples = []
-        self.subjects_length = []
+        self.subjects_length = []  # samples per subject
         self.imgs = []
         self.use_sensor = use_sensor
+        self.use_preprocessing = use_preprocessing
+        if use_preprocessing:
+            self.f = tables.open_file('tsdf.h5', mode='r')
         for i in range(MAX_SAMPLE_LEN):
             self.samples.append('{:06d}'.format(i)+DATA_EXT)
             self.imgs.append('{:06d}'.format(i)+IMG_EXT)
@@ -42,6 +46,7 @@ class MSRADataSet(Dataset):
         self.length = len(self.data)
         assert np.array(self.subjects_length).sum() == self.length
 
+    # return 32*32*32 tsdf, 63 label, 1 max_l
     def __getitem__(self, item):
         with open(self.data[item]['path']) as f:
             # img_width img_height left top right bottom
@@ -52,19 +57,21 @@ class MSRADataSet(Dataset):
                   'data': data}
 
         # tsdf output
-        r = cal_tsdf_cuda([sample, self.data[item]['label']])
-        if r is  None:
-            print item,self.data[item]['path']
-            cal_tsdf([sample, self.data[item]['label']])
-            return None
+        if self.use_preprocessing:
+            row = self.f.root.data[item,:]
+            return row[:VOXEL_RES**3].reshape((VOXEL_RES,VOXEL_RES,VOXEL_RES)), row[VOXEL_RES**3:-1], row[-1]
         else:
-            tsdf, labels, (mid_p, max_l) = r
-            # min_pc,max_pc = cal_tsdf_cuda([sample, self.data[item]['label']])
-        if self.use_sensor:
-            angles = cal_angle_from_pos(labels.copy())
-            return (tsdf,angles), labels, (mid_p, max_l)
-        else:
-            return tsdf, labels, (mid_p, max_l)
+            r = cal_tsdf_cuda(sample)
+            if r is None:
+                return None
+            else:
+                tsdf, max_l, mid_p = r
+                label = self.data[item]['label']
+                if self.use_sensor:
+                    angles = cal_angle_from_pos(label.copy())
+                    return (tsdf,angles), label, max_l, mid_p
+                else:
+                    return tsdf, label, max_l, mid_p
 
     def get_point_cloud(self, index):
         sample = self.get_raw_data(self.data[index]['path'])
@@ -102,15 +109,17 @@ class MSRADataSet(Dataset):
 
 
 if __name__ == "__main__":
-    m = MSRADataSet(DATA_DIR)
-    # from visualization import plot_tsdf, plot_pointcloud
-    p = "/home/hfy/data/msra15/P0/4/000001_depth.bin"
-    s = m.get_raw_data(p)
-    pc = cal_pointcloud(s)
+    pass
+    # m = MSRADataSet(DATA_DIR, use_preprocessing=True)
+    from visualization import plot_tsdf, plot_pointcloud
+    # p = "/home/hfy/data/msra15/P0/4/000001_depth.bin"
+    # s = m.get_raw_data(p)
+    # pc = cal_pointcloud(s)
     # plot_pointcloud(pc)
     # print pc[pc[:,2]>-240]
-    for i in range(0,1520):
-        m[i]
+    # for i in range(1520,1540):
+    #     t,l,ma = m[i]
+    #     plot_tsdf(t,l)
 
     # for i in range(10):
     #     t = time()

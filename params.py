@@ -11,7 +11,7 @@ JOINT_POS_LEN = JOINT_LEN *3
 
 # tsdf params
 VOXEL_RES = 32  # M
-TRUC_DIS_T = 1
+TRUC_DIS_T = 3
 
 # camera params
 FOCAL = 241.42
@@ -22,11 +22,11 @@ CENTER_Y = 120
 DATA_DIR = '/home/hfy/data/msra15/'
 LEARNING_RATE = 0.1
 MOMENTUM = 0.9
-EPOCH_COUNT = 20
+EPOCH_COUNT = 50
 WEIGHT_DECAY = 0.0005
 BATCH_SIZE = 32
 PRINT_FREQ = 5
-
+WORKER = 0
 # test params
 ERROR_THRESH = 30.0 # 10mm
 

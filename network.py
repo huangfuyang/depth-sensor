@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from params import *
 import torch
 
+
 class HandNet(nn.Module):
     def __init__(self):
         super(HandNet, self).__init__()
@@ -22,7 +23,7 @@ class HandNet(nn.Module):
         x = x.view(-1,128*4*4*4)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
+        x = self.fc3(x)
         return x
 
 
@@ -45,5 +46,19 @@ class HandSensorNet(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = torch.cat((x,y),dim=1)
-        x = F.relu(self.fc3(x))
+        x = self.fc3(x)
+        return x
+
+
+class SensorNet(nn.Module):
+    def __init__(self):
+        super(SensorNet, self).__init__()
+        self.fc1 = nn.Linear(15, 30)
+        self.fc2 = nn.Linear(30, 45)
+        self.fc3 = nn.Linear(45, JOINT_POS_LEN)
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         return x

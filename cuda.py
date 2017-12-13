@@ -64,25 +64,25 @@ d_a = cuda.to_device(a)
 d_b = cuda.to_device(b)
 an_array = a
 t = time()
-print sum(an_array)
+print (sum(an_array))
 # increment_by_one(an_array)
-print time()-t
+print (time()-t)
 t = time()
-blockspergrid = (an_array.size + (threadsperblock - 1)) / threadsperblock
-print threadsperblock,blockspergrid
+blockspergrid = int((an_array.size + (threadsperblock - 1)) / threadsperblock)
+print (threadsperblock,blockspergrid)
 # increment_by_one_gpu[blockspergrid, threadsperblock](b)
 # increment_by_one_gpu[blockspergrid, threadsperblock](b)
 d_output_a = cuda.device_array(shape=blockspergrid)
 d_output_b = cuda.device_array(shape=blockspergrid)
 # output = np.empty(threadsperblock)
 sum_gpu[blockspergrid, threadsperblock](d_a,d_output_a)
-print time()-t
+print (time()-t)
 t= time()
 
 sum_gpu[blockspergrid, threadsperblock](d_b,d_output_b)
 output = np.empty(threadsperblock)
 output = d_output_a.copy_to_host()
-print time()-t
+print (time()-t)
 output = d_output_b.copy_to_host()
 t = time()
 i = np.random.rand(32*32*32)
@@ -93,5 +93,5 @@ blockspergrid = [32,32]
 add_3d[blockspergrid,32](center,d_depth,d_tsdf)
 tsdf = np.empty([32,32,32])
 tsdf = d_tsdf.copy_to_host()
-print time()-t
+print (time()-t)
 # print sum(output)

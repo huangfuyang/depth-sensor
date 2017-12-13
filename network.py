@@ -38,7 +38,7 @@ class HandSensorNet(nn.Module):
         self.fc2 = nn.Linear(2048, 512)
         self.fc3 = nn.Linear(512+15, JOINT_POS_LEN)
 
-    def forward(self, (x,y)):
+    def forward(self, x,y):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
         x = F.relu(self.conv3(x))

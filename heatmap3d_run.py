@@ -7,10 +7,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data.sampler import SubsetRandomSampler
 
-from dataset.datareader import *
+from dataset.MSRA import *
 from helper import *
 from metrics import *
-from network import *
+from models.v2vnet import *
 
 USE_SENSOR = False
 
@@ -60,8 +60,8 @@ def main(Model, full = False):
     net = Model()
     net.cuda()
     criterion = nn.MSELoss().cuda()
-    best_acc = 0
-    optimizer = optim.SGD(net.parameters(),
+    best_err = 9999
+    optimizer = optim.RMSprop(net.parameters(),
                           lr=args.learning_rate,
                           momentum=args.momentum,
                           weight_decay=args.weight_decay)
@@ -80,9 +80,7 @@ def main(Model, full = False):
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
-    USE_SENSOR = True if type(net) is not HandNet else False
-    dataset = MSRADataSet(args.data,USE_SENSOR, use_preprocessing=False)
-
+    dataset = MSRADataSet3D(args.data)
     train_idx, valid_idx = dataset.get_train_test_indices()
     # train_idx = range(2)
     train_sampler = SubsetRandomSampler(train_idx)
@@ -109,19 +107,19 @@ def main(Model, full = False):
         epoch_start_time = time()
         adjust_learning_rate(optimizer, epoch+1)
 
-        acc = train(train_loader,net,criterion,optimizer,epoch+1)
+        err = train(train_loader,net,criterion,optimizer,epoch+1)
         # remember best acc and save checkpoint
-        is_best = acc > best_acc
-        best_acc = max(acc, best_acc)
+        is_best = err < best_err
+        best_err = min(err, best_err)
 
         print('Epoch: [{0}/{1}]  Time [{2}/{3}]'.format(
             epoch+1, args.epochs, datetime.timedelta(seconds=(time() - epoch_start_time)),
                                 datetime.timedelta(seconds=(time() - start_time))))
         save_checkpoint({
             'epoch': epoch + 1,
-            'arch': '3dDNN',
+            'arch': '3dHMP',
             'state_dict': net.state_dict(),
-            'best_acc': best_acc,
+            'best_acc': best_err,
             'optimizer': optimizer.state_dict(),
         }, is_best)
     print('Finished Training')
@@ -141,45 +139,36 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
     end = time()
     for i, s in enumerate(train_loader):
-        if len(s) == 3:
-            tsdf, target, max_l = s
-        else:
-            tsdf, target, max_l, mid_p = s
-            mid_p = mid_p.unsqueeze(1)
-        max_l = max_l.unsqueeze(1)
+        data, heatmaps, label, param = s
         # measure data loading time
         data_time.update(time() - end)
-        if type(model) is not HandNet:
-            tsdf, angles = tsdf
-            input_sensor_var = torch.autograd.Variable(angles.cuda())
-        batch_size = tsdf.size(0)
-        tsdf = tsdf[:,2,:,:,:].unsqueeze(1).cuda()
-
+        batch_size = data.size(0)
         # normalize target to [0,1]
-        n_target = (target.view(batch_size, -1, 3) - mid_p).view(batch_size,-1) / max_l + 0.5
-        n_target[n_target < 0] = 0
-        n_target[n_target >= 1] = 1
+        # n_target = (target.view(batch_size, -1, 3) - mid_p).view(batch_size,-1) / max_l + 0.5
+        # n_target[n_target < 0] = 0
+        # n_target[n_target >= 1] = 1
 
-        input_var = torch.autograd.Variable(tsdf)
-        target_var = torch.autograd.Variable(n_target.cuda())
+        input_var = torch.autograd.Variable(data.unsqueeze(1).cuda())
+        target_var = torch.autograd.Variable(heatmaps.cuda())
 
         # compute output
-        if type(model) is HandSensorNet:
-            output = model((input_var,input_sensor_var))
-        elif type(model) is HandNet:
-            output = model(input_var)
-        elif type(model) is SensorNet:
-            output = model(input_sensor_var)
+        output = model(input_var)
 
         # record loss
         loss = criterion(output, target_var)
         losses.update(loss.data[0], batch_size)
-
         # measure accuracy
-        # unnormalize output to original space
-        output = ((output.data.cpu() - 0.5) * max_l).view(batch_size,-1,3) + mid_p
-        output = output.view(batch_size,-1)
-        err_t = accuracy_error_thresh_portion_batch(output, target)
+        output = output.data.view(batch_size,JOINT_LEN, PC_GT_SIZE**3)
+        output, indices = torch.max(output,dim=2)
+        indices = indices.unsqueeze(-1)
+        indices_3d = torch.FloatTensor(batch_size,JOINT_LEN,3)
+        indices_3d[:,:,0] = indices.div(PC_GT_SIZE**2)
+        indices_3d[:,:,1] = indices.remainder(PC_GT_SIZE**2).div(PC_GT_SIZE)
+        indices_3d[:,:,2] = indices.remainder(PC_GT_SIZE)
+        indices_3d = indices_3d.view(batch_size,-1)
+        param[1] = param[1].unsqueeze(1)*2
+        indices_3d = indices_3d.mul(param[1].repeat(1,JOINT_LEN*3)).add(param[0].repeat(1,JOINT_LEN))
+        err_t = mean_error_heatmap3d(indices_3d, label)
         errors.update(err_t, batch_size)
 
         # compute gradient and do SGD step
@@ -268,6 +257,7 @@ def test(test_loader, model, criterion, error = accuracy_error_thresh_portion_ba
 def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 0.3 every 5 epochs"""
     lr = args.learning_rate * (0.3 ** (epoch // 5))
+    print 'Learning rate :',lr
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -278,35 +268,66 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
         shutil.copyfile(filename, 'model_best.pth.tar')
 
 
+def visual_img(img):
+    a = img*255
+    Image.fromarray(a).show()
+
+def label2vox(label):
+    d = np.zeros((HM_SIZE,HM_SIZE),dtype=np.float32)
+    label = label.numpy().reshape((JOINT_LEN,2)).astype(int)
+    d[label[:,0].reshape(-1),label[:,1].reshape(-1)] = 255
+    Image.fromarray(d).show()
+
+
 def visualize_result(model_path, data_path):
-    net = HandNet()
-    dataset = MSRADataSet(data_path)
+    # from visualization import plot_tsdf, plot_pointcloud
+    from visualization import *
+    model = V2VNet()
+    dataset = MSRADataSet3D(data_path)
     checkpoint = torch.load(model_path)
     # args.start_epoch = checkpoint['epoch']
     best_acc = checkpoint['best_acc']
     print "using model with acc [{:.2f}%]".format(best_acc)
-    net.load_state_dict(checkpoint['state_dict'])
-    net.eval()
-    for i in range(10000,10010):
+    model.load_state_dict(checkpoint['state_dict'])
+    model.eval()
+    model.cuda()
+    criterion = nn.MSELoss()
+    batch_size= 1
+    for i in range(0,1):
         s = dataset[i]
-        if len(s) == 3:
-            tsdf, target, max_l = s
-        else:
-            tsdf, target, max_l, mid_p = s
-            mid_p = torch.from_numpy(mid_p).unsqueeze(0)
-        max_l = torch.from_numpy(np.array([max_l])).unsqueeze(0)
-        target = torch.from_numpy(target).unsqueeze(0)
-        if USE_SENSOR:
-            tsdf, angles = tsdf
-            input_sensor_var = torch.autograd.Variable(angles)
-        tsdf = torch.from_numpy(tsdf)[2, :, :, :].unsqueeze(0).unsqueeze(0)
+        data, heatmaps, label, param = s
+        input_var = torch.autograd.Variable(torch.from_numpy(data).unsqueeze(0).unsqueeze(0).cuda())
+        target_var = torch.autograd.Variable(torch.from_numpy(heatmaps).unsqueeze(0).cuda())
 
-        input_var = torch.autograd.Variable(tsdf)
         # compute output
-        output = net(input_var)
-        output = ((output.data - 0.5) * max_l).view(1, -1, 3) + mid_p
-        output = output.view(1, -1)
-        err_t = mean_error(output, target)
+        output = model(input_var)
+
+        # record loss
+        loss = criterion(output, target_var)
+        # measure accuracy
+        output = output.data.view(batch_size, JOINT_LEN, PC_GT_SIZE, PC_GT_SIZE,PC_GT_SIZE)
+        output_max, indices = torch.max(output.view(batch_size, JOINT_LEN, PC_GT_SIZE ** 3), dim=2)
+        indices = indices.unsqueeze(-1)
+        # print output,indices
+        indices_3d = torch.FloatTensor(batch_size, JOINT_LEN, 3)
+        indices_3d[:, :, 0] = indices.div(PC_GT_SIZE ** 2)
+        indices_3d[:, :, 1] = indices.remainder(PC_GT_SIZE ** 2).div(PC_GT_SIZE)
+        indices_3d[:, :, 2] = indices.remainder(PC_GT_SIZE)
+        indices_3d = indices_3d.view(batch_size, -1)
+        voxel_length = param[1]
+        min_p = torch.from_numpy(param[0]).unsqueeze(0)  # min point
+        indices_3d = indices_3d.mul(voxel_length*2).add(min_p.repeat(1, JOINT_LEN))
+        t_label = torch.from_numpy(label).unsqueeze(0)
+        err_t = mean_error_heatmap3d(indices_3d, t_label)
+        # heatmaps = np.sum(heatmaps.reshape((JOINT_LEN, -1)), axis=0).reshape((PC_GT_SIZE, PC_GT_SIZE, PC_GT_SIZE))
+        # visual_img(data[0])
+        # visual_img(heatmaps)
+        # plot_voxel_label(data,label,param[0], voxel_length)
+        # plot_voxel_label(data,indices_3d[0].numpy(), param[0], voxel_length)
+        output = output.squeeze(0).cpu().numpy()
+        print output[0].max()
+        # plot_gt(output[:2,:,:,:])
+        # label2img(indices_2d)
         print err_t
         # print accuracy_error_thresh_portion_batch(output, label, max_l)
         # print good_frame(output, label, max_l)
@@ -393,6 +414,11 @@ if __name__ == "__main__":
     #                        [[1, 2, 3], [4, 5, 6]],
     #                       [[1, 2, 3], [4, 5, 6]],
     #                       [[7, 8, 9], [1,2,3]]])
+    #
+    # m = torch.FloatTensor([[1, 2, 3], [4, 5, 6]])
+    #
+    # print m.size()
+    # print m.repeat(1,2)
     # c = torch.FloatTensor([[0, 0, 0],[1,1,1],[2,2,2],[0,0,0]])
     # c = c.unsqueeze(1)
     # m = m.numpy()
@@ -415,10 +441,10 @@ if __name__ == "__main__":
 
 
     # preprocessing()
-    # main(HandNet, True)
+    main(V2VNet, False)
     # test_only('model_best90.pth.tar', mean_error, 0)
     # path = '/home/hfy/code/awesome-hand-pose-estimation/evaluation/results/msra/result.txt'
     # test_only('model_best.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
     # test_only('model_best_full.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
 
-    visualize_result('model_best_full.pth.tar',DATA_DIR)
+    # visualize_result('checkpoint.pth.tar',DATA_DIR)

@@ -13,25 +13,57 @@ def tsdf_kernel(vox_ori,voxel_len,l,r,t,b,trunc_dis,i,o):
     x = cuda.threadIdx.x
     y = cuda.blockIdx.x
     z = cuda.blockIdx.y
-    # voxel position
+    v_index = x + y*cuda.blockDim.x + z*cuda.gridDim.x*cuda.blockDim.x
+    volume_size = VOXEL_RES**3
+    if v_index >= volume_size:
+        return
+    # voxel center
     v_x = vox_ori[0]+x * voxel_len
     v_y = vox_ori[1]+y * voxel_len
     v_z = vox_ori[2]+z * voxel_len
-    vox_depth = -v_z
-    q = FOCAL / vox_depth
+    # voxel center in image frame
+    q = -FOCAL / v_z
     pix_x = int((v_x * q + CENTER_X))
     pix_y = int((-v_y * q + CENTER_Y))
-    o[z, y, x] = 1
+    o[0,z, y, x] = 0
+    o[1,z, y, x] = 0
+    o[2,z, y, x] = 0
     if pix_x < l or pix_x >= r or pix_y < t or pix_y >= b:
         return
     idx = (pix_y - t) * b_w + pix_x - l
     pix_depth = i[idx]
     if abs(pix_depth) < 1:
         return
-    diff = (pix_depth - vox_depth)/trunc_dis
-    if diff >= 1 or diff <= -1:
-        return
-    o[z, y, x] = diff
+    # closest surface point in world frame
+    q = pix_depth/FOCAL
+    w_x = (pix_x-CENTER_X)*q
+    w_y = -(pix_y-CENTER_Y)*q
+    w_z = -pix_depth
+    tsdf_x = abs(v_x-w_x)/trunc_dis
+    tsdf_y = abs(v_y-w_y)/trunc_dis
+    tsdf_z = abs(v_z-w_z)/trunc_dis
+
+    disTosurfaceMin = pow(tsdf_x * tsdf_x + tsdf_y * tsdf_y + tsdf_z * tsdf_z, 0.5)
+    # disTosurfaceMin = min(disTosurfaceMin / SURFACE_THICK, 1.0)
+    if disTosurfaceMin > 1:
+        tsdf_x = 1
+        tsdf_y = 1
+        tsdf_z = 1
+    tsdf_x = min(tsdf_x, 1)
+    tsdf_y = min(tsdf_y, 1)
+    tsdf_z = min(tsdf_z, 1)
+
+    # tsdf_x = 0 if tsdf_x == 1 else tsdf_x
+    # tsdf_y = 0 if tsdf_y == 1 else tsdf_y
+    # tsdf_z = 0 if tsdf_z == 1 else tsdf_z
+    if w_z > v_z:
+        tsdf_x = - tsdf_x
+        tsdf_y = - tsdf_y
+        tsdf_z = - tsdf_z
+
+    o[0,z, y, x] = tsdf_x
+    o[1,z, y, x] = tsdf_y
+    o[2,z, y, x] = tsdf_z
 
 
 @cuda.jit
@@ -50,7 +82,7 @@ def min_max_kernel(l,r,t,b,a,o):
     else:
         q = cam_z / FOCAL
         cam_x = q * (x - CENTER_X)
-        cam_y = -q * (y - CENTER_Y)  # change to right hand axis
+        cam_y = -q * (y - CENTER_Y)  # change to camera frame
         cam_z = -cam_z
         min_p[tid][0], min_p[tid][1], min_p[tid][2] = cam_x, cam_y, cam_z
         max_p[tid][0], max_p[tid][1], max_p[tid][2] = cam_x, cam_y, cam_z
@@ -88,6 +120,7 @@ def cal_tsdf_cuda(s):
         b_w = r - l
         b_h = b - t
 
+        # min max calculation
         blockdim = (s['data'].size + mm_threadsperblock -1)/mm_threadsperblock
         d_depth = cuda.to_device(s['data'])
         d_mm = cuda.device_array([blockdim, 6],dtype=np.float32)
@@ -105,11 +138,13 @@ def cal_tsdf_cuda(s):
         trunc_dis = (voxel_len * TRUC_DIS_T)
         vox_ori = mid_p - max_l / 2 + voxel_len / 2
         t2 = timer()
+
+        # tsdf calculation #
         d_depth = cuda.to_device(s['data'])
-        d_tsdf = cuda.device_array([VOXEL_RES ,VOXEL_RES , VOXEL_RES],dtype=np.float32)
+        d_tsdf = cuda.device_array([3,VOXEL_RES, VOXEL_RES, VOXEL_RES],dtype=np.float32)
         blockspergrid = [VOXEL_RES,VOXEL_RES]
         tsdf_kernel[blockspergrid,threadsperblock](vox_ori,voxel_len,l,r,t,b,trunc_dis,d_depth,d_tsdf)
-        tsdf = np.empty([VOXEL_RES, VOXEL_RES, VOXEL_RES], dtype=np.float32)
+        # tsdf = np.empty([VOXEL_RES, VOXEL_RES, VOXEL_RES, 3], dtype=np.float32)
         tsdf = d_tsdf.copy_to_host()
         t3 = timer()
         # print "time 1: %.4f, time 1+2: %.4f" % (t2 - t1, t3 - t1)
@@ -125,27 +160,6 @@ def cal_tsdf_cuda(s):
         # print ""
         return None
 
-
-def cal_pointcloud(s):
-    l = s['header'][2]
-    t = s['header'][3]
-    r = s['header'][4]
-    b = s['header'][5]
-    b_w = r - l
-    p_clouds = []
-    for y in range(t, b):
-        for x in range(l, r):
-            idx = (y - t) * b_w + x - l
-            cam_z = s['data'][idx]
-            if cam_z == 0:
-                continue
-            q = cam_z / FOCAL
-            cam_x = q * (x - CENTER_X)
-            cam_y = -q * (y - CENTER_Y)  # change to right hand axis
-            cam_z = -cam_z
-            p_clouds.append([cam_x, cam_y, cam_z])
-    npa = np.asarray(p_clouds, dtype=np.float32)
-    return npa
 
 # return point cloud in camera coordination and tsdf data
 def cal_tsdf(s):

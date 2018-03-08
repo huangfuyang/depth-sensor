@@ -7,7 +7,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data.sampler import SubsetRandomSampler
 
-from dataset.datareader import *
+from dataset.MSRA import *
+from models.hg import *
 from helper import *
 from metrics import *
 from network import *
@@ -57,12 +58,12 @@ def main(Model, full = False):
     warning_init()
     start_time = time()
     init_parser()
-    net = Model()
-    net.cuda()
+    net = Model(nSTACK,2,256).cuda()
     criterion = nn.MSELoss().cuda()
-    best_acc = 0
-    optimizer = optim.SGD(net.parameters(),
-                          lr=args.learning_rate,
+    best_err = 9999
+    optimizer = optim.RMSprop(net.parameters(),
+    # optimizer=optim.SGD(net.parameters(),
+                                              lr=args.learning_rate,
                           momentum=args.momentum,
                           weight_decay=args.weight_decay)
 
@@ -75,14 +76,12 @@ def main(Model, full = False):
             best_acc = checkpoint['best_acc']
             net.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
+            print("=> loaded checkpoint '{}' (epoch {}) err {}"
+                  .format(args.resume, checkpoint['epoch'], best_acc))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
-    USE_SENSOR = True if type(net) is not HandNet else False
-    dataset = MSRADataSet(args.data,USE_SENSOR, use_preprocessing=False)
-
+    dataset = MSRADataSet(args.data)
     train_idx, valid_idx = dataset.get_train_test_indices()
     # train_idx = range(2)
     train_sampler = SubsetRandomSampler(train_idx)
@@ -109,10 +108,10 @@ def main(Model, full = False):
         epoch_start_time = time()
         adjust_learning_rate(optimizer, epoch+1)
 
-        acc = train(train_loader,net,criterion,optimizer,epoch+1)
+        err = train(train_loader,net,criterion,optimizer,epoch+1)
         # remember best acc and save checkpoint
-        is_best = acc > best_acc
-        best_acc = max(acc, best_acc)
+        is_best = err < best_err
+        best_err = min(err, best_err)
 
         print('Epoch: [{0}/{1}]  Time [{2}/{3}]'.format(
             epoch+1, args.epochs, datetime.timedelta(seconds=(time() - epoch_start_time)),
@@ -121,7 +120,7 @@ def main(Model, full = False):
             'epoch': epoch + 1,
             'arch': '3dDNN',
             'state_dict': net.state_dict(),
-            'best_acc': best_acc,
+            'best_acc': best_err,
             'optimizer': optimizer.state_dict(),
         }, is_best)
     print('Finished Training')
@@ -141,45 +140,43 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
     end = time()
     for i, s in enumerate(train_loader):
-        if len(s) == 3:
-            tsdf, target, max_l = s
-        else:
-            tsdf, target, max_l, mid_p = s
-            mid_p = mid_p.unsqueeze(1)
-        max_l = max_l.unsqueeze(1)
+        data, heatmaps, label, pix_length = s
         # measure data loading time
         data_time.update(time() - end)
-        if type(model) is not HandNet:
-            tsdf, angles = tsdf
-            input_sensor_var = torch.autograd.Variable(angles.cuda())
-        batch_size = tsdf.size(0)
-        tsdf = tsdf[:,2,:,:,:].unsqueeze(1).cuda()
-
+        batch_size = data[0].size(0)
         # normalize target to [0,1]
-        n_target = (target.view(batch_size, -1, 3) - mid_p).view(batch_size,-1) / max_l + 0.5
-        n_target[n_target < 0] = 0
-        n_target[n_target >= 1] = 1
+        # n_target = (target.view(batch_size, -1, 3) - mid_p).view(batch_size,-1) / max_l + 0.5
+        # n_target[n_target < 0] = 0
+        # n_target[n_target >= 1] = 1
 
-        input_var = torch.autograd.Variable(tsdf)
-        target_var = torch.autograd.Variable(n_target.cuda())
+        input_var1 = torch.autograd.Variable(data[0].unsqueeze(1).cuda())
+        input_var2 = torch.autograd.Variable(data[1].unsqueeze(1).cuda())
+        input_var3 = torch.autograd.Variable(data[2].unsqueeze(1).cuda())
+        target_var = torch.autograd.Variable(heatmaps.cuda())
 
         # compute output
-        if type(model) is HandSensorNet:
-            output = model((input_var,input_sensor_var))
-        elif type(model) is HandNet:
-            output = model(input_var)
-        elif type(model) is SensorNet:
-            output = model(input_sensor_var)
+        output = model(input_var1)
 
         # record loss
-        loss = criterion(output, target_var)
+        loss = criterion(output[0], target_var)
+        for k in range(1, nSTACK):
+            loss += criterion(output[k], target_var)
         losses.update(loss.data[0], batch_size)
 
         # measure accuracy
-        # unnormalize output to original space
-        output = ((output.data.cpu() - 0.5) * max_l).view(batch_size,-1,3) + mid_p
-        output = output.view(batch_size,-1)
-        err_t = accuracy_error_thresh_portion_batch(output, target)
+        k = 5
+        output = output[-1].data.view(batch_size, JOINT_LEN, HM_SIZE * HM_SIZE)
+        d, indices = torch.topk(output, k, dim=2)
+        indices = indices.unsqueeze(-1)
+        indices_2d = torch.FloatTensor(batch_size, JOINT_LEN, k, 2)
+        indices_2d[:, :, :, 0] = torch.remainder(indices, HM_SIZE)
+        indices_2d[:, :, :, 1] = torch.div(indices, HM_SIZE)
+
+        err_pixel, ind = mean_error_heatmap_topk(indices_2d, label)
+        err_ = err_pixel*torch.mean(pix_length)
+        err_pixel = err_pixel.mean()
+        err_t =err_.mean()
+        err_index = err_[4]
         errors.update(err_t, batch_size)
 
         # compute gradient and do SGD step
@@ -196,9 +193,9 @@ def train(train_loader, model, criterion, optimizer, epoch):
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'acc_in_t {err_t.val:.3f} ({err_t.avg:.3f})'.format(
+                  'acc_in_t {err_t.val:.3f} ({err_t.avg:.3f}) err pix {err:.3f} err in {ei:.3f}'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, err_t=errors))
+                   data_time=data_time, loss=losses, err_t=errors, err=err_pixel, ei=err_index))
     return errors.avg
 
 
@@ -267,7 +264,8 @@ def test(test_loader, model, criterion, error = accuracy_error_thresh_portion_ba
 
 def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 0.3 every 5 epochs"""
-    lr = args.learning_rate * (0.3 ** (epoch // 5))
+    lr = args.learning_rate * (DECAY_RATIO ** (epoch // DECAY_EPOCH))
+    print 'Learning rate :',lr
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -278,8 +276,20 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
         shutil.copyfile(filename, 'model_best.pth.tar')
 
 
+def visual_img(img):
+    a = img*255
+    Image.fromarray(a).show()
+
+def label2img(label):
+    d = np.zeros((HM_SIZE,HM_SIZE),dtype=np.float32)
+    label = label.numpy().reshape((JOINT_LEN,2)).astype(int)
+    d[label[:,1].reshape(-1),label[:,0].reshape(-1)] = 255
+    Image.fromarray(d).show()
+
+
 def visualize_result(model_path, data_path):
-    net = HandNet()
+    # from visualization import plot_tsdf, plot_pointcloud
+    net = HourglassNet(nSTACK,2,256)
     dataset = MSRADataSet(data_path)
     checkpoint = torch.load(model_path)
     # args.start_epoch = checkpoint['epoch']
@@ -287,33 +297,71 @@ def visualize_result(model_path, data_path):
     print "using model with acc [{:.2f}%]".format(best_acc)
     net.load_state_dict(checkpoint['state_dict'])
     net.eval()
-    for i in range(10000,10010):
+    net.cuda()
+    criterion = nn.MSELoss().cuda()
+    batch_size= 1
+    e = AverageMeter()
+    for i in range(2001,2002):
         s = dataset[i]
-        if len(s) == 3:
-            tsdf, target, max_l = s
-        else:
-            tsdf, target, max_l, mid_p = s
-            mid_p = torch.from_numpy(mid_p).unsqueeze(0)
-        max_l = torch.from_numpy(np.array([max_l])).unsqueeze(0)
-        target = torch.from_numpy(target).unsqueeze(0)
-        if USE_SENSOR:
-            tsdf, angles = tsdf
-            input_sensor_var = torch.autograd.Variable(angles)
-        tsdf = torch.from_numpy(tsdf)[2, :, :, :].unsqueeze(0).unsqueeze(0)
+        data, heatmaps, label, pix_length = s
+        # measure data loading time
+        # normalize target to [0,1]
+        # n_target = (target.view(batch_size, -1, 3) - mid_p).view(batch_size,-1) / max_l + 0.5
+        # n_target[n_target < 0] = 0
+        # n_target[n_target >= 1] = 1
 
-        input_var = torch.autograd.Variable(tsdf)
+        input_var1 = torch.autograd.Variable(torch.from_numpy(data[0]).unsqueeze(0).unsqueeze(0).cuda())
+        input_var2 = torch.autograd.Variable(torch.from_numpy(data[1]).unsqueeze(0).unsqueeze(0).cuda())
+        input_var3 = torch.autograd.Variable(torch.from_numpy(data[2]).unsqueeze(0).unsqueeze(0).cuda())
+        target_var = torch.autograd.Variable(torch.from_numpy(heatmaps).unsqueeze(0).cuda())
+
         # compute output
-        output = net(input_var)
-        output = ((output.data - 0.5) * max_l).view(1, -1, 3) + mid_p
-        output = output.view(1, -1)
-        err_t = mean_error(output, target)
+        output = net(input_var1)
+
+        # record loss
+        loss = criterion(output[0], target_var)
+        for k in range(1, nSTACK):
+            loss += criterion(output[k], target_var)
+
+        # measure accuracy
+        # print output[-1].data.shape
+        # visual_img(output[-1].data[0,0].cpu().numpy())
+        # visual_img(output[-1].data[0,3].cpu().numpy())
+        # visual_img(heatmaps[0])
+        palm =  output[-1].data[0,0].cpu().numpy()
+        # for i in range(JOINT_LEN):
+        #     visual_img(output[-1].data[0, i].cpu().numpy())
+
+
+        k = 1
+        output = output[-1].data.view(batch_size, JOINT_LEN, HM_SIZE * HM_SIZE)
+        d, indices = torch.topk(output,k,dim=2)
+        indices = indices.unsqueeze(-1)
+        indices_2d = torch.FloatTensor(batch_size, JOINT_LEN, k,2)
+        indices_2d[:, :,:, 0] = torch.remainder(indices, HM_SIZE)
+        indices_2d[:, :,:, 1] = torch.div(indices, HM_SIZE)
+
+        # indices_2d = indices_2d.view(batch_size, -1)
+        label = torch.from_numpy(label).unsqueeze(0)
+
+        err_t, ind = mean_error_heatmap_topk(indices_2d, label)
+        err_t*=pix_length
+        err_t = err_t.mean()
+        # err_t = mean_error_heatmap(indices_2d, label)*pix_length
+        heatmaps = np.sum(heatmaps.reshape((JOINT_LEN, -1)), axis=0).reshape((HM_SIZE, HM_SIZE))
+        e.update(err_t,1)
+        visual_img(data[0])
+        # visual_img(heatmaps)
+        label2img(label)
+        label2img(ind)
         print err_t
+        # print loss.data[0]
         # print accuracy_error_thresh_portion_batch(output, label, max_l)
         # print good_frame(output, label, max_l)
         # pc, label = dataset.get_point_cloud(i)
         # plot_pointcloud(pc, label)
         # plot_pointcloud(pc, (output.reshape(-1,3)-0.5)*max_l+mid_p)
-
+    print "ave:",e.avg
 
 
 
@@ -359,35 +407,6 @@ def test_only(model_path, error = accuracy_error_thresh_portion_batch, test_id =
         print "result saved to ",save2file
 
 
-def preprocessing():
-    import tables
-    warning_init()
-    init_parser()
-    start_time = time()
-    dataset = MSRADataSet(args.data)
-    # train_idx, valid_idx = dataset.get_train_test_indices()
-
-    # train_sampler = SubsetRandomSampler(train_idx)
-    #
-    # train_loader = torch.utils.data.DataLoader(dataset,
-    #                                            batch_size=args.batch_size,
-    #                                            num_workers=0)
-
-    f = tables.open_file("tsdf.h5", mode="w")
-    atom = tables.Float32Atom()
-    array_c = f.create_earray(f.root, 'data', atom, (0, dataset[0][0].size+dataset[0][1].size+dataset[0][2].size))
-    for i in range(len(dataset)):
-            s = dataset[i]
-            tsdf, target, max_l, mid_p = s
-            tsdf = np.append(tsdf.reshape(-1), np.append(target,max_l)).reshape(1,-1)
-            array_c.append(tsdf)
-            if i % 100 == 0:
-                print ("saving [{}/{}]  time:{}".format(
-                    i,len(dataset),datetime.timedelta(seconds=(time() - start_time))))
-    f.close()
-    print('Finished Preprocessing')
-
-
 if __name__ == "__main__":
     # m = torch.FloatTensor([[[1, 2, 3], [4, 5, 6]],
     #                        [[1, 2, 3], [4, 5, 6]],
@@ -415,10 +434,23 @@ if __name__ == "__main__":
 
 
     # preprocessing()
-    # main(HandNet, True)
     # test_only('model_best90.pth.tar', mean_error, 0)
     # path = '/home/hfy/code/awesome-hand-pose-estimation/evaluation/results/msra/result.txt'
     # test_only('model_best.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
     # test_only('model_best_full.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
 
-    visualize_result('model_best_full.pth.tar',DATA_DIR)
+
+    # main(HourglassNet, False)
+    # visualize_result('model_best(3).pth.tar',DATA_DIR)
+    # visualize_result('model_best(3).pth.tar',DATA_DIR)
+    # visualize_result('checkpoint.pth.tar',DATA_DIR)
+    # from torchvision.models.resnet import *
+    # from models.v2vnet import V2VNet
+    # model = HourglassNet(2,2,256)
+    # model = V2VNet()
+    # model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    # for i in model_parameters:
+    #     print np.prod(i.size())
+    # params = sum([np.prod(p.size()) for p in model_parameters])
+    # print params
+    # print np.prod(np.array([2,2,3]))

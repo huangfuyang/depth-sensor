@@ -110,7 +110,7 @@ class V2VNet(nn.Module):
         self.encodecoder = EncoDecoder(32)
         self.res2 = self._make_layer(BasicBlock,32,1,'B')
         self.basic2 = self.get_basic_block(32, 32, 1)
-        self.basic3 = self.get_basic_block(32, 21, 1)
+        self.basic3 = self.get_basic_block(32, JOINT_LEN, 1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):

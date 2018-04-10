@@ -11,6 +11,7 @@ from dataset.MSRA import *
 from helper import *
 from metrics import *
 from models.v2vnet import *
+from models.hgv2v import *
 
 USE_SENSOR = False
 
@@ -53,19 +54,24 @@ def warning_init():
     np.seterr(all='warn')
 
 
-def main(Model, full = False):
+def main(net, full = False):
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     warning_init()
     start_time = time()
     init_parser()
-    net = Model()
     net.cuda()
     criterion = nn.MSELoss().cuda()
     best_err = 9999
-    optimizer = optim.RMSprop(net.parameters(),
+    optimizer_rms = optim.RMSprop(net.parameters(),
                           lr=args.learning_rate,
                           momentum=args.momentum,
                           weight_decay=args.weight_decay)
 
+    optimizer_sgd = optim.SGD(net.parameters(),
+                          lr=args.learning_rate,
+                          momentum=args.momentum,
+                          weight_decay=args.weight_decay)
+    optimizer = optimizer_rms
     # resume from checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
@@ -102,12 +108,14 @@ def main(Model, full = False):
         test_loader = torch.utils.data.DataLoader(dataset,
                                                batch_size=args.batch_size, sampler=test_sampler,
                                                num_workers=WORKER)
+    optimizer = optimizer_rms
 
     for epoch in range(args.start_epoch, args.epochs):  # loop over the dataset multiple times
         epoch_start_time = time()
         adjust_learning_rate(optimizer, epoch+1)
-
-        err = train(train_loader,net,criterion,optimizer,epoch+1)
+        loss = 1
+        loss, err = train(train_loader,net,criterion,optimizer,epoch+1)
+        # optimizer = optimizer_rms if loss > 0.0015 else optimizer_sgd
         # remember best acc and save checkpoint
         is_best = err < best_err
         best_err = min(err, best_err)
@@ -151,24 +159,28 @@ def train(train_loader, model, criterion, optimizer, epoch):
         input_var = torch.autograd.Variable(data.unsqueeze(1).cuda())
         target_var = torch.autograd.Variable(heatmaps.cuda())
 
-        # compute output
         output = model(input_var)
-
         # record loss
-        loss = criterion(output, target_var)
+        loss = criterion(output[0], target_var)
+        for k in range(1, nSTACK):
+            loss += criterion(output[k], target_var)
         losses.update(loss.data[0], batch_size)
+
         # measure accuracy
-        output = output.data.view(batch_size,JOINT_LEN, PC_GT_SIZE**3)
-        output, indices = torch.max(output,dim=2)
+        k = 1
+        output = output[-1].data.view(batch_size,JOINT_LEN, PC_GT_SIZE**3)
+        # output, indices = torch.max(output,dim=2)
+        output, indices = torch.topk(output, k, dim=2)
         indices = indices.unsqueeze(-1)
-        indices_3d = torch.FloatTensor(batch_size,JOINT_LEN,3)
-        indices_3d[:,:,0] = indices.div(PC_GT_SIZE**2)
-        indices_3d[:,:,1] = indices.remainder(PC_GT_SIZE**2).div(PC_GT_SIZE)
-        indices_3d[:,:,2] = indices.remainder(PC_GT_SIZE)
+        indices_3d = torch.FloatTensor(batch_size,JOINT_LEN,k,3)
+        indices_3d[:,:,:,0] = indices.div(PC_GT_SIZE**2)
+        indices_3d[:,:,:,1] = indices.remainder(PC_GT_SIZE**2).div(PC_GT_SIZE)
+        indices_3d[:,:,:,2] = indices.remainder(PC_GT_SIZE)
         indices_3d = indices_3d.view(batch_size,-1)
-        param[1] = param[1].unsqueeze(1)*2
-        indices_3d = indices_3d.mul(param[1].repeat(1,JOINT_LEN*3)).add(param[0].repeat(1,JOINT_LEN))
-        err_t = mean_error_heatmap3d(indices_3d, label)
+        param[1] = param[1].unsqueeze(1)*PC_SIZE/PC_GT_SIZE
+        indices_3d = indices_3d.mul(param[1].repeat(1,JOINT_LEN*3*k)).add(param[0].repeat(1,JOINT_LEN*k)).view(batch_size,JOINT_LEN,k,3)
+        err_t = mean_error_heatmap3d_topk(indices_3d, label)
+        # print err_t
         errors.update(err_t, batch_size)
 
         # compute gradient and do SGD step
@@ -184,11 +196,11 @@ def train(train_loader, model, criterion, optimizer, epoch):
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                  'Loss {loss.val:.5f} ({loss.avg:.5f})\t'
                   'acc_in_t {err_t.val:.3f} ({err_t.avg:.3f})'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
                    data_time=data_time, loss=losses, err_t=errors))
-    return errors.avg
+    return losses.avg, errors.avg
 
 
 def test(test_loader, model, criterion, error = accuracy_error_thresh_portion_batch):
@@ -255,8 +267,8 @@ def test(test_loader, model, criterion, error = accuracy_error_thresh_portion_ba
 
 
 def adjust_learning_rate(optimizer, epoch):
-    """Sets the learning rate to the initial LR decayed by 0.3 every 5 epochs"""
-    lr = args.learning_rate * (0.3 ** (epoch // 5))
+    """Sets the learning rate to the initial LR"""
+    lr = args.learning_rate * (DECAY_RATIO ** (epoch // DECAY_EPOCH))
     print 'Learning rate :',lr
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
@@ -279,10 +291,9 @@ def label2vox(label):
     Image.fromarray(d).show()
 
 
-def visualize_result(model_path, data_path):
+def visualize_result(model_path,model, data_path):
     # from visualization import plot_tsdf, plot_pointcloud
     from visualization import *
-    model = V2VNet()
     dataset = MSRADataSet3D(data_path)
     checkpoint = torch.load(model_path)
     # args.start_epoch = checkpoint['epoch']
@@ -293,14 +304,14 @@ def visualize_result(model_path, data_path):
     model.cuda()
     criterion = nn.MSELoss()
     batch_size= 1
-    for i in range(0,1):
+    for i in range(-3,-1):
         s = dataset[i]
         data, heatmaps, label, param = s
         input_var = torch.autograd.Variable(torch.from_numpy(data).unsqueeze(0).unsqueeze(0).cuda())
         target_var = torch.autograd.Variable(torch.from_numpy(heatmaps).unsqueeze(0).cuda())
 
         # compute output
-        output = model(input_var)
+        output = model(input_var)[-1]
 
         # record loss
         loss = criterion(output, target_var)
@@ -320,15 +331,13 @@ def visualize_result(model_path, data_path):
         t_label = torch.from_numpy(label).unsqueeze(0)
         err_t = mean_error_heatmap3d(indices_3d, t_label)
         # heatmaps = np.sum(heatmaps.reshape((JOINT_LEN, -1)), axis=0).reshape((PC_GT_SIZE, PC_GT_SIZE, PC_GT_SIZE))
-        # visual_img(data[0])
-        # visual_img(heatmaps)
         # plot_voxel_label(data,label,param[0], voxel_length)
-        # plot_voxel_label(data,indices_3d[0].numpy(), param[0], voxel_length)
+        plot_voxel_label(data,indices_3d[0].numpy(), param[0], voxel_length)
         output = output.squeeze(0).cpu().numpy()
-        print output[0].max()
         # plot_gt(output[:2,:,:,:])
         # label2img(indices_2d)
-        print err_t
+        print "loss:", loss.data[0]
+        print "error:",err_t
         # print accuracy_error_thresh_portion_batch(output, label, max_l)
         # print good_frame(output, label, max_l)
         # pc, label = dataset.get_point_cloud(i)
@@ -439,12 +448,15 @@ if __name__ == "__main__":
     # output = ((output - 1) * max_l + mid_p).reshape(batch,-1)
     # print output
 
-
     # preprocessing()
-    main(V2VNet, False)
-    # test_only('model_best90.pth.tar', mean_error, 0)
+    net = Hourglass3DNet(nSTACK,nModule,nFEAT)
+    main(net, False)
+    # test_only('model_best.pth.tar', mean_error, 0)
     # path = '/home/hfy/code/awesome-hand-pose-estimation/evaluation/results/msra/result.txt'
     # test_only('model_best.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
     # test_only('model_best_full.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
 
+    # visualize_result('model_best_3d.pth.tar',DATA_DIR)
+    # visualize_result('model_best.pth.tar',net,DATA_DIR)
     # visualize_result('checkpoint.pth.tar',DATA_DIR)
+

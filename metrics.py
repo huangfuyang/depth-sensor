@@ -91,12 +91,34 @@ def mean_error_heatmap_topk(output,target):
 def mean_error_heatmap3d(output,target):
     batch_size = target.size(0)
     diff = (output - target).abs().view(batch_size, -1, 3)
-    print diff
+    # print diff
     sqrt_row = diff.pow(2).sum(2).sqrt()
     if batch_size == 1:
         print sqrt_row
     if batch_size != 0:
         return torch.mean(sqrt_row)
+        # return torch.mean(sqrt_row[:,4])
+    else:
+        return 0
+
+
+def mean_error_heatmap3d_topk(output,target):
+    batch_size = target.size(0)
+    joint_len = JOINT_LEN
+    err = 99999
+    k = output.size()[2]
+    target = target.view(batch_size,-1,3).unsqueeze(2).repeat(1,1,k,1)
+    r, indice = (output-target).pow(2).sum(-1).min(-1)
+    r = r.sqrt()
+    ind = torch.FloatTensor(batch_size,joint_len,3)
+    for i in range(batch_size):
+        for j in range(joint_len):
+            ind[i][j] = output[i][j][indice[i][j]].view(-1)
+    # if batch_size == 1:
+    #     print r
+    # print r
+    if batch_size != 0:
+        return torch.mean(r)
         # return torch.mean(sqrt_row[:,4])
     else:
         return 0

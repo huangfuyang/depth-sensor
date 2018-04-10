@@ -182,7 +182,7 @@ class MSRADataSet3D(Dataset):
         self.root_path = root_path
         self.subjects = filter(lambda x: os.path.isdir(os.path.join(root_path, x)), os.listdir(root_path))
         self.subjects.sort()
-        # self.subjects = self.subjects[:2]
+        self.subjects = self.subjects[:2]
         self.gestures = GESTURES
         self.samples = []
         self.subjects_length = []  # samples per subject
@@ -204,6 +204,7 @@ class MSRADataSet3D(Dataset):
                     self.data.append(data)
             self.subjects_length.append(sub_len)
         self.length = len(self.data)
+        self.data_augmentation = True
         assert np.array(self.subjects_length).sum() == self.length
 
     # return voxel, heatmap and label
@@ -214,12 +215,20 @@ class MSRADataSet3D(Dataset):
             data = np.fromfile(f,np.float32)
 
         label = self.data[item]['label']
-        v, gt, param = self.pre_processing(header,data,label)
-        return v, gt, label, param
+        # label = label[:3]
+        return self.pre_processing(header,data,label)
 
     def get_center_voxel(self, header, data, gt, size = PC_SIZE, gt_size = PC_GT_SIZE):
         pc = cal_pointcloud(header,data)
+        r = np.radians(np.random.rand() * ROTATE_ANGLE*2 - ROTATE_ANGLE)
+        rotation = np.array([[np.math.cos(r), np.math.sin(r), 0],
+                             [-np.math.sin(r), np.math.cos(r), 0],
+                             [0, 0, 1]],dtype=np.float32)
+        if self.data_augmentation:
+            pc = np.matmul(pc,rotation)
         gt = gt.reshape(-1, 3)
+        if self.data_augmentation:
+            gt = np.matmul(gt,rotation)
         max_coor = np.max(np.append(pc,gt,axis=0),axis=0)
         min_coor = np.min(np.append(pc,gt,axis=0),axis=0)
         max_size = np.max(max_coor-min_coor)
@@ -242,7 +251,7 @@ class MSRADataSet3D(Dataset):
             map_data[i] = gt_map
         # v[n_gt[:,0],n_gt[:,1],n_gt[:,2]] = 2
 
-        return v, map_data, (new_min_coor.reshape(-1), voxel_size)
+        return v, map_data, gt.reshape(-1), (new_min_coor.reshape(-1), voxel_size)
 
     def pre_processing(self, header, data, gt, size = IMG_SIZE, map_size = HM_SIZE):
         # normalize image
@@ -254,50 +263,7 @@ class MSRADataSet3D(Dataset):
         h = b - t
         # convert to point cloud
         v = self.get_center_voxel(header,data, gt)
-        # normal to [0,1]
-        # f_data = data[data > 0]
-        # max_d = np.max(f_data)
-        # min_d = np.min(f_data)
-        # data = (data-min_d)/(max_d-min_d)
-        # data[data<0] = 1
-        # img = Image.fromarray(data.reshape(h,w))
-        # ratio = float(size)/max(w,h)
-        # n_w,n_h = int(round(w*ratio)),int(round(h*ratio))
-        # img = img.resize((n_w,n_h), Image.ANTIALIAS)
-        # delta_w = size-n_w
-        # delta_h = size-n_h
-        # padding = (delta_w // 2, delta_h // 2, delta_w - (delta_w // 2), delta_h - (delta_h // 2))
-        # new_im = ImageOps.expand(img, padding, 1)
-        #
-        # generate heatmaps
-        # gt = gt.reshape(-1, 3)
-        # gt_pixel = camera2pixel(gt, *get_param('msra'))
-        # # maps = []
-        # map_data = np.empty(0,dtype=np.float32)
-        # images = [new_im, new_im.resize((48,48),Image.ANTIALIAS),new_im.resize((24,24),Image.ANTIALIAS)]
-        # n_label = np.empty(0,dtype=np.float32)
-        # ratio_hm = float(map_size)/max(w,h)
-        # n_w,n_h = int(round(w*ratio_hm)),int(round(h*ratio_hm))
-        # delta_w = map_size-n_w
-        # delta_h = map_size-n_h
-        # for i in range(JOINT_LEN):
-        #     x,y = gt_pixel[i, :2]
-        #     h_data = np.zeros((map_size, map_size), dtype=np.float32)
-        #     x,y = x-l,y-t
-        #     x = int(x * ratio_hm + delta_w // 2)
-        #     y = int(y * ratio_hm + delta_h // 2)
-        #     n_label = np.append(n_label,np.array([y,x],dtype=np.float32))
-        #     if x>=0 and y>=0 and x<h_data.shape[1] and y<h_data.shape[0]:
-        #     # if x >= 1 and y >= 1 and x < h_data.shape[1] - 1 and y < h_data.shape[0] - 1:
-        #         h_data[y, x] = 1
-        #
-        #     map_data = np.append(map_data,h_data)
-        #     # hm = Image.fromarray(h_data)
-        #     # maps.append(hm)
-
         return v
-        # return images,map_data,n_label
-
 
     def __len__(self):
         # return 100
@@ -322,6 +288,7 @@ class MSRADataSet3D(Dataset):
 
 
 if __name__ == "__main__":
+
     # n = np.array([-1.1,2,3])
     # print n.astype(int)
     # n = np.expand_dims(n,axis=0)
@@ -329,11 +296,13 @@ if __name__ == "__main__":
     # print np.tile(n,(2,1))
     from visualization import *
     m = MSRADataSet3D(DATA_DIR)
-    v, gt= m[0]
+    for i in range(10):
+        v,gt,label,param = m[0]
+        print param[0].dtype, param[1].dtype
+        plot_voxel_label(v,label,param[0],param[1])
     # pc = np.array(np.where(v>0)).transpose()
     # plot_pointcloud(pc)
     # plot_voxel(v)
-    plot_gt(gt)
     # p = "/home/hfy/data/msra15/P0/4/000001_depth.bin"
     # s = get_raw_data(p)
     # pc = cal_pointcloud(s)

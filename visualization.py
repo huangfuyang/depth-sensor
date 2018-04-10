@@ -55,7 +55,7 @@ def plot_gt(gt):
     show()
 
 
-def plot_voxel_label(data):
+def plot_voxel_label_both(data):
     x,y,z = np.where(data==1)
     x1,y1,z1 = np.where(data==2)
     scale = np.ones(x.shape[0]+x1.shape[0])

@@ -2,14 +2,9 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 from torch.utils.data import Dataset,DataLoader
-# from sensor import cal_angle_from_pos
 import os,glob
 from params import *
 from heatmap import *
-from tsdf import *
-from time import time
-import warnings
-import tables
 from PIL import Image, ImageOps
 from utils.img import *
 

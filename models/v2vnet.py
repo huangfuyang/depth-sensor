@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import math
 from functools import partial
-from res3d import BasicBlock
+from models.res3d import BasicBlock
 
 
 class EncoDecoder(nn.Module):

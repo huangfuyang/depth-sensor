@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 from torch.utils.data import Dataset,DataLoader
-from sensor import cal_angle_from_pos
+# from sensor import cal_angle_from_pos
 import os,glob
 from params import *
 from heatmap import *
@@ -180,9 +180,9 @@ def cal_pointcloud(header, data):
 class MSRADataSet3D(Dataset):
     def __init__(self,root_path):
         self.root_path = root_path
-        self.subjects = filter(lambda x: os.path.isdir(os.path.join(root_path, x)), os.listdir(root_path))
+        self.subjects = list(filter(lambda x: os.path.isdir(os.path.join(root_path, x)), os.listdir(root_path)))
         self.subjects.sort()
-        self.subjects = self.subjects[:2]
+        # self.subjects = self.subjects[:2]
         self.gestures = GESTURES
         self.samples = []
         self.subjects_length = []  # samples per subject
@@ -298,7 +298,7 @@ if __name__ == "__main__":
     m = MSRADataSet3D(DATA_DIR)
     for i in range(10):
         v,gt,label,param = m[0]
-        print param[0].dtype, param[1].dtype
+        print(param[0].dtype, param[1].dtype)
         plot_voxel_label(v,label,param[0],param[1])
     # pc = np.array(np.where(v>0)).transpose()
     # plot_pointcloud(pc)

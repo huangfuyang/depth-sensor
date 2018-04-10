@@ -111,11 +111,12 @@ class Res3D(nn.Module):
         self.numOut = numOut
         self.bn = nn.BatchNorm3d(self.numIn)
         self.relu = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv3d(self.numIn, self.numOut / 2, bias=True, kernel_size=1)
-        self.bn1 = nn.BatchNorm3d(self.numOut / 2)
-        self.conv2 = nn.Conv3d(self.numOut / 2, self.numOut / 2, bias=True, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm3d(self.numOut / 2)
-        self.conv3 = nn.Conv3d(self.numOut / 2, self.numOut, bias=True, kernel_size=1)
+        # print(self.numIn, self.numOut//2)
+        self.conv1 = nn.Conv3d(self.numIn, self.numOut // 2, bias=True, kernel_size=1)
+        self.bn1 = nn.BatchNorm3d(self.numOut // 2)
+        self.conv2 = nn.Conv3d(self.numOut // 2, self.numOut // 2, bias=True, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm3d(self.numOut // 2)
+        self.conv3 = nn.Conv3d(self.numOut // 2, self.numOut, bias=True, kernel_size=1)
 
         if self.numIn != self.numOut:
             self.conv4 = nn.Conv3d(self.numIn, self.numOut, bias=True, kernel_size=1)
@@ -199,7 +200,7 @@ class ResNet(nn.Module):
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes * block.expansion
-        print self.inplanes
+        print (self.inplanes)
         for i in range(1, blocks):
             layers.append(block(self.inplanes, planes))
 

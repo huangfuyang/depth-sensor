@@ -12,6 +12,7 @@ from helper import *
 from metrics import *
 from models.v2vnet import *
 from models.hgv2v import *
+# from visualization import plot_tsdf, plot_pointcloud
 
 USE_SENSOR = False
 
@@ -269,7 +270,7 @@ def test(test_loader, model, criterion, error = accuracy_error_thresh_portion_ba
 def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR"""
     lr = args.learning_rate * (DECAY_RATIO ** (epoch // DECAY_EPOCH))
-    print 'Learning rate :',lr
+    print ('Learning rate :',lr)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -293,12 +294,11 @@ def label2vox(label):
 
 def visualize_result(model_path,model, data_path):
     # from visualization import plot_tsdf, plot_pointcloud
-    from visualization import *
     dataset = MSRADataSet3D(data_path)
     checkpoint = torch.load(model_path)
     # args.start_epoch = checkpoint['epoch']
     best_acc = checkpoint['best_acc']
-    print "using model with acc [{:.2f}%]".format(best_acc)
+    print( "using model with acc [{:.2f}%]".format(best_acc))
     model.load_state_dict(checkpoint['state_dict'])
     model.eval()
     model.cuda()
@@ -336,8 +336,8 @@ def visualize_result(model_path,model, data_path):
         output = output.squeeze(0).cpu().numpy()
         # plot_gt(output[:2,:,:,:])
         # label2img(indices_2d)
-        print "loss:", loss.data[0]
-        print "error:",err_t
+        print("loss:", loss.data[0])
+        print ("error:",err_t)
         # print accuracy_error_thresh_portion_batch(output, label, max_l)
         # print good_frame(output, label, max_l)
         # pc, label = dataset.get_point_cloud(i)
@@ -363,7 +363,7 @@ def test_only(model_path, error = accuracy_error_thresh_portion_batch, test_id =
     criterion = nn.MSELoss().cuda()
     checkpoint = torch.load(model_path)
     best_acc = checkpoint['best_acc']
-    print "using model with acc [{:.2f}%]".format(best_acc)
+    print ("using model with acc [{:.2f}%]".format(best_acc))
     net.load_state_dict(checkpoint['state_dict'])
     net.eval()
 
@@ -378,15 +378,15 @@ def test_only(model_path, error = accuracy_error_thresh_portion_batch, test_id =
                                                   batch_size=BATCH_SIZE,
                                                   num_workers=0)
     r, acc = test(test_loader, net, criterion, error=error)
-    print "final accuracy {:3f}".format(acc)
-    print "total time: ", datetime.timedelta(seconds=(time() - start_time))
+    print( "final accuracy {:3f}".format(acc))
+    print( "total time: ", datetime.timedelta(seconds=(time() - start_time)))
     if type(save2file) is str:
         if world_coor:
             np.savetxt(save2file, r,fmt = '%.3f')
         else:
             r = camera2pixel(r.reshape(r.shape[0],-1,3),*get_param('msra')).reshape(r.shape[0],-1)
             np.savetxt(save2file, r,fmt = '%.3f')
-        print "result saved to ",save2file
+        print ("result saved to ",save2file)
 
 
 def preprocessing():

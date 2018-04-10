@@ -1,7 +1,7 @@
 import torch.nn as nn
 import math
 from params import *
-from res3d import Res3D
+from models.res3d import Res3D
 
 
 # def make_res_layer(self, block, planes, blocks, shortcut_type, stride=1):

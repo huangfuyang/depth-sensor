@@ -45,7 +45,7 @@ def mean_error(output,target):
     diff = torch.abs(output - target).view(batch_size, -1, 3)
     sqr_sum = torch.sum(torch.pow(diff, 2), 2)
     sqrt_row = torch.sqrt(sqr_sum)
-    print sqrt_row
+    print (sqrt_row)
     if batch_size != 0:
         return torch.mean(sqrt_row)
     else:
@@ -58,7 +58,7 @@ def mean_error_heatmap(output,target):
     sqr_sum = torch.sum(torch.pow(diff, 2), 2)
     sqrt_row = torch.sqrt(sqr_sum)
     if batch_size == 1:
-        print sqrt_row
+        print (sqrt_row)
     if batch_size != 0:
         return torch.mean(sqrt_row)
         # return torch.mean(sqrt_row[:,4])
@@ -94,7 +94,7 @@ def mean_error_heatmap3d(output,target):
     # print diff
     sqrt_row = diff.pow(2).sum(2).sqrt()
     if batch_size == 1:
-        print sqrt_row
+        print (sqrt_row)
     if batch_size != 0:
         return torch.mean(sqrt_row)
         # return torch.mean(sqrt_row[:,4])

@@ -3,8 +3,8 @@ DATA_EXT = '_depth.bin'
 IMG_EXT = '_depth.jpg'
 LABEL = 'joint.txt'
 # GESTURES = ['1']
-# GESTURES = ['1','2','3','4','5','6','7','8','9','I','IP','L','MP','RP','T','TIP','Y']
-GESTURES = ['1','2']
+GESTURES = ['1','2','3','4','5','6','7','8','9','I','IP','L','MP','RP','T','TIP','Y']
+# GESTURES = ['1','2']
 GESTURES_LEN = len(GESTURES)
 MAX_SAMPLE_LEN = 500
 JOINT_LEN = 21
@@ -22,12 +22,12 @@ CENTER_X = 160
 CENTER_Y = 120
 
 # train params. default value will be changed by passing args in console
-DATA_DIR = '/home/hfy/data/msra15/'
+DATA_DIR = '/home/alzeng/dataset/cvpr15_MSRAHandGestureDB/'
 LEARNING_RATE = 1e-5
 MOMENTUM = 0.9
-EPOCH_COUNT =30
+EPOCH_COUNT = 20
 WEIGHT_DECAY = 0.0005
-BATCH_SIZE = 3
+BATCH_SIZE = 10
 PRINT_FREQ = 10
 WORKER = 0
 DECAY_EPOCH = 5

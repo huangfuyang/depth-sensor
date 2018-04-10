@@ -147,16 +147,16 @@ def cal_tsdf_cuda(s):
         # tsdf = np.empty([VOXEL_RES, VOXEL_RES, VOXEL_RES, 3], dtype=np.float32)
         tsdf = d_tsdf.copy_to_host()
         t3 = timer()
-        # print "time 1: %.4f, time 1+2: %.4f" % (t2 - t1, t3 - t1)
+        # print("time 1: %.4f, time 1+2: %.4f" % (t2 - t1, t3 - t1)
         return tsdf,max_l,mid_p
     except RuntimeWarning as w:
-        print "warning caught: ", w
-        print "min:",min_p
-        print "max:",max_p
-        print "minmax:",mm_p
-        print "mid:",mid_p
-        print "len_e",len_e
-        print "max_l",max_l,
+        print("warning caught: ", w)
+        print("min:",min_p)
+        print("max:",max_p)
+        print("minmax:",mm_p)
+        print("mid:",mid_p)
+        print("len_e",len_e)
+        print("max_l",max_l)
         # print ""
         return None
 
@@ -196,7 +196,7 @@ def cal_tsdf(s):
     npa = np.asarray(p_clouds,dtype=np.float32)
     min_p = np.array([minx,miny,minz],dtype=np.float32)
     max_p = np.array([maxx,maxy,maxz],dtype=np.float32)
-    print min_p,max_p
+    print (min_p,max_p)
     return None
     mid_p = (min_p+max_p)/2
     len_e = max_p-min_p

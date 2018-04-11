@@ -111,10 +111,9 @@ def main(net, full = False):
 
     for epoch in range(args.start_epoch, args.epochs):  # loop over the dataset multiple times
         epoch_start_time = time()
-        lr =
         for param_group in optimizer.param_groups:
-            param_group['lr'] *= ratio
-        print ('adjust learning rate to ', param_group['lr'])
+            lr = param_group['lr']
+        print ('learning rate to ', lr)
         # adjust_learning_rate(optimizer, epoch+1)
         loss = 1
         print("lr:")
@@ -285,7 +284,7 @@ def lower_learning_rate(optimizer, ratio):
     """Sets the learning rate to the initial LR"""
     for param_group in optimizer.param_groups:
         param_group['lr'] *= ratio
-    print ('adjust learning rate to ', param_group['lr'])
+    print ('acc up, adjust learning rate to ', param_group['lr'])
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):

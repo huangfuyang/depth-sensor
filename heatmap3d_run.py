@@ -54,7 +54,7 @@ def warning_init():
 
 
 def main(net, full = False):
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+    os.environ['CUDA_VISIBLE_DEVICES'] = GPU_ID
     warning_init()
     start_time = time()
     init_parser()

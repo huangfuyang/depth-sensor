@@ -113,10 +113,9 @@ def main(net, full = False):
         epoch_start_time = time()
         for param_group in optimizer.param_groups:
             lr = param_group['lr']
-        print ('learning rate to ', lr)
+        print ('learning rate now:', lr)
         # adjust_learning_rate(optimizer, epoch+1)
         loss = 1
-        print("lr:")
         loss, err = train(train_loader,net,criterion,optimizer,epoch+1)
         # optimizer = optimizer_rms if loss > 0.0015 else optimizer_sgd
         # remember best acc and save checkpoint
@@ -134,7 +133,7 @@ def main(net, full = False):
             'optimizer': optimizer.state_dict(),
         }, is_best)
         if not is_best:
-            lower_learning_rate(optimizer,0.2)
+            lower_learning_rate(optimizer,DECAY_RATIO)
 
     print('Finished Training')
     # print 'evaluating test dataset'

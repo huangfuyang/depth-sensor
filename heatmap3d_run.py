@@ -111,8 +111,13 @@ def main(net, full = False):
 
     for epoch in range(args.start_epoch, args.epochs):  # loop over the dataset multiple times
         epoch_start_time = time()
-        adjust_learning_rate(optimizer, epoch+1)
+        lr =
+        for param_group in optimizer.param_groups:
+            param_group['lr'] *= ratio
+        print ('adjust learning rate to ', param_group['lr'])
+        # adjust_learning_rate(optimizer, epoch+1)
         loss = 1
+        print("lr:")
         loss, err = train(train_loader,net,criterion,optimizer,epoch+1)
         # optimizer = optimizer_rms if loss > 0.0015 else optimizer_sgd
         # remember best acc and save checkpoint
@@ -129,6 +134,9 @@ def main(net, full = False):
             'best_acc': best_err,
             'optimizer': optimizer.state_dict(),
         }, is_best)
+        if not is_best:
+            lower_learning_rate(optimizer,0.2)
+
     print('Finished Training')
     # print 'evaluating test dataset'
     # result, acc = test(test_loader,net,criterion)
@@ -271,6 +279,13 @@ def adjust_learning_rate(optimizer, epoch):
     print ('Learning rate :',lr)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+
+
+def lower_learning_rate(optimizer, ratio):
+    """Sets the learning rate to the initial LR"""
+    for param_group in optimizer.param_groups:
+        param_group['lr'] *= ratio
+    print ('adjust learning rate to ', param_group['lr'])
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):

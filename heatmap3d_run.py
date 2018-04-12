@@ -108,13 +108,13 @@ def main(net, full = False):
                                                batch_size=args.batch_size, sampler=test_sampler,
                                                num_workers=WORKER)
     optimizer = optimizer_rms
+    set_learning_rate(optimizer, args.learning_rate)
 
     for epoch in range(args.start_epoch, args.epochs):  # loop over the dataset multiple times
         epoch_start_time = time()
         for param_group in optimizer.param_groups:
             lr = param_group['lr']
-        print ('learning rate now:', lr)
-        # adjust_learning_rate(optimizer, epoch+1)
+        print('learning rate now:', lr)
         loss = 1
         loss, err = train(train_loader,net,criterion,optimizer,epoch+1)
         # optimizer = optimizer_rms if loss > 0.0015 else optimizer_sgd
@@ -275,6 +275,12 @@ def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR"""
     lr = args.learning_rate * (DECAY_RATIO ** (epoch // DECAY_EPOCH))
     print ('Learning rate :',lr)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+
+def set_learning_rate(optimizer, lr):
+    print('Set learning rate:', lr)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -464,7 +470,7 @@ if __name__ == "__main__":
     main(net, False)
     # test_only('model_best.pth.tar', mean_error, 0)
     # path = '/home/hfy/code/awesome-hand-pose-estimation/evaluation/results/msra/result.txt'
-    # test_only('model_best.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
+    test_only('model_best.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
     # test_only('model_best_full.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
 
     # visualize_result('model_best_3d.pth.tar',DATA_DIR)

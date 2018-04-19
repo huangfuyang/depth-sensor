@@ -201,6 +201,16 @@ def DrawGaussian3D(size, pt, g_size):
     v[v_x[0]:v_x[1],v_y[0]:v_y[1],v_z[0]:v_z[1]] = g[g_x[0]:g_x[1], g_y[0]:g_y[1], g_z[0]:g_z[1]]
     return v
 
+def DrawBoneGaussian3D(size, pt1, pt2, g_size):
+    ps,pe = pt1, pt2
+    v = DrawGaussian3D(size,pt1,g_size)
+    while not np.array_equal(ps,pe):
+        d = pe-ps
+        d = d / np.linalg.norm(d, 2)
+        ps = np.round(d + ps).astype(np.int)
+        vt = DrawGaussian3D(size, ps, g_size)
+        v = np.maximum(v,vt)
+    return v
 
 def generate_gaussian3D(size):
     s = -(size-1)/2
@@ -229,3 +239,9 @@ def generate_gaussian(size):
 #         print str(j)[:6]+',',
 #     print
 
+# p1 = np.array([1,2,3])
+# p2 = np.array([1,2,4])
+# d = p2-p1
+# d = d/np.linalg.norm(d,2)
+# print np.round(d + p1)
+# print d

@@ -41,6 +41,9 @@ def init_parser():
     parser.add_argument('-p', '--print-freq', default=PRINT_FREQ, type=int,
                          help='print frequency (default: {})'.format(PRINT_FREQ))
 
+    parser.add_argument('-g', '--gpu-id', default=GPU_ID, type=str,
+                         help='GPU ID (default: {})'.format(GPU_ID))
+
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
 
@@ -116,6 +119,7 @@ def main(net, full = False):
             lr = param_group['lr']
         print('learning rate now:', lr)
         loss = 1
+        adjust_learning_rate(optimizer,epoch)
         loss, err = train(train_loader,net,criterion,optimizer,epoch+1)
         # optimizer = optimizer_rms if loss > 0.0015 else optimizer_sgd
         # remember best acc and save checkpoint
@@ -173,7 +177,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         # measure accuracy
         k = 1
-        output = output[-1].data.view(batch_size,JOINT_LEN, PC_GT_SIZE**3)
+        output = output[-1].data.view(batch_size,JOINT_LEN+BONE_LEN, PC_GT_SIZE**3)
+        output = output[:,:JOINT_LEN,:]
         # output, indices = torch.max(output,dim=2)
         output, indices = torch.topk(output, k, dim=2)
         indices = indices.unsqueeze(-1)
@@ -470,7 +475,7 @@ if __name__ == "__main__":
     main(net, False)
     # test_only('model_best.pth.tar', mean_error, 0)
     # path = '/home/hfy/code/awesome-hand-pose-estimation/evaluation/results/msra/result.txt'
-    test_only('model_best.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
+    # test_only('model_best.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
     # test_only('model_best_full.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)
 
     # visualize_result('model_best_3d.pth.tar',DATA_DIR)

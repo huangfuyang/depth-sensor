@@ -109,10 +109,10 @@ class Hourglass3DNet(nn.Module):
             lin = nn.Sequential(nn.Conv3d(self.nFeats, self.nFeats, bias=True, kernel_size=1, stride=1),
                                 nn.BatchNorm3d(self.nFeats), self.relu)
             _lin_.append(lin)
-            _tmpOut.append(nn.Conv3d(self.nFeats, JOINT_LEN, bias=True, kernel_size=1, stride=1))
+            _tmpOut.append(nn.Conv3d(self.nFeats, JOINT_LEN+BONE_LEN, bias=True, kernel_size=1, stride=1))
             if i < self.nStack - 1:
                 _ll_.append(nn.Conv3d(self.nFeats, self.nFeats, bias=True, kernel_size=1, stride=1))
-                _tmpOut_.append(nn.Conv3d(JOINT_LEN, self.nFeats, bias=True, kernel_size=1, stride=1))
+                _tmpOut_.append(nn.Conv3d(JOINT_LEN+BONE_LEN, self.nFeats, bias=True, kernel_size=1, stride=1))
 
         self.hourglass = nn.ModuleList(_hourglass)
         self.Residual = nn.ModuleList(_Residual)

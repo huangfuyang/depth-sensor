@@ -177,7 +177,7 @@ class MSRADataSet3D(Dataset):
         self.root_path = root_path
         self.subjects = list(filter(lambda x: os.path.isdir(os.path.join(root_path, x)), os.listdir(root_path)))
         self.subjects.sort()
-        # self.subjects = self.subjects[:2]
+        self.subjects = self.subjects[:3]
         self.gestures = GESTURES
         self.samples = []
         self.subjects_length = []  # samples per subject
@@ -248,6 +248,47 @@ class MSRADataSet3D(Dataset):
 
         return v, map_data, gt.reshape(-1), (new_min_coor.reshape(-1), voxel_size)
 
+    def get_center_voxel_multilabel(self, header, data, gt, size=PC_SIZE, gt_size=PC_GT_SIZE):
+        pc = cal_pointcloud(header, data)
+        r = np.radians(np.random.rand() * ROTATE_ANGLE * 2 - ROTATE_ANGLE)
+        rotation = np.array([[np.math.cos(r), np.math.sin(r), 0],
+                             [-np.math.sin(r), np.math.cos(r), 0],
+                             [0, 0, 1]], dtype=np.float32)
+        if self.data_augmentation:
+            pc = np.matmul(pc, rotation)
+        gt = gt.reshape(-1, 3)
+        if self.data_augmentation:
+            gt = np.matmul(gt, rotation)
+        max_coor = np.max(np.append(pc, gt, axis=0), axis=0)
+        min_coor = np.min(np.append(pc, gt, axis=0), axis=0)
+        max_size = np.max(max_coor - min_coor)
+        mid = (max_coor + min_coor) / 2
+        v = np.zeros(shape=(size, size, size), dtype=np.float32)
+        new_min_coor = mid - np.array([max_size / 2, max_size / 2, max_size / 2], dtype=np.float32)
+        new_min_coor = np.expand_dims(new_min_coor, axis=0)
+        voxel_size = (max_size / size).astype(np.float32)
+        gt_voxel_size = max_size / gt_size
+        n_pc = (pc - np.tile(new_min_coor, (pc.shape[0], 1))) - 0.001
+        n_pc = (n_pc / voxel_size).astype(int)
+        v[n_pc[:, 0], n_pc[:, 1], n_pc[:, 2]] = 1
+
+        # ground truth
+        map_data = np.zeros((JOINT_LEN+BONE_LEN, gt_size, gt_size, gt_size), dtype=np.float32)
+        n_gt = (gt - np.tile(new_min_coor, (gt.shape[0], 1))) - 0.001
+        n_gt = (n_gt / gt_voxel_size).astype(int)
+        for i in range(JOINT_LEN):
+            gt_map = DrawGaussian3D(gt_size, n_gt[i], 7)
+            map_data[i] = gt_map
+        for i in range(BONE_LEN):
+            if i % 5 == 0:
+                gt_map = DrawBoneGaussian3D(gt_size, n_gt[0],n_gt[i+1], 7)
+            else:
+                gt_map = DrawBoneGaussian3D(gt_size, n_gt[i],n_gt[i+1], 7)
+            map_data[i+JOINT_LEN] = gt_map
+        # v[n_gt[:,0],n_gt[:,1],n_gt[:,2]] = 2
+
+        return v, map_data, gt.reshape(-1), (new_min_coor.reshape(-1), voxel_size)
+
     def pre_processing(self, header, data, gt, size = IMG_SIZE, map_size = HM_SIZE):
         # normalize image
         l = header[2]
@@ -257,7 +298,9 @@ class MSRADataSet3D(Dataset):
         w = r - l
         h = b - t
         # convert to point cloud
-        v = self.get_center_voxel(header,data, gt)
+        # v = self.get_center_voxel(header,data, gt)
+        v = self.get_center_voxel_multilabel(header,data, gt)
+
         return v
 
     def __len__(self):

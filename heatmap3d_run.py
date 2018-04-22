@@ -2,7 +2,7 @@ import argparse
 import datetime
 import shutil
 import warnings
-
+import sys
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data.sampler import SubsetRandomSampler
@@ -57,13 +57,12 @@ def warning_init():
 
 
 def main(net, full = False):
-    os.environ['CUDA_VISIBLE_DEVICES'] = GPU_ID
     warning_init()
     start_time = time()
-    init_parser()
     net.cuda()
     criterion = nn.MSELoss().cuda()
     best_err = 9999
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
     optimizer_rms = optim.RMSprop(net.parameters(),
                           lr=args.learning_rate,
                           momentum=args.momentum,
@@ -80,7 +79,7 @@ def main(net, full = False):
             print("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
-            best_acc = checkpoint['best_acc']
+            best_err = checkpoint['best_acc']
             net.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
@@ -114,12 +113,12 @@ def main(net, full = False):
     set_learning_rate(optimizer, args.learning_rate)
 
     for epoch in range(args.start_epoch, args.epochs):  # loop over the dataset multiple times
+        print ('best error:', best_err)
         epoch_start_time = time()
         for param_group in optimizer.param_groups:
             lr = param_group['lr']
-        print('learning rate now:', lr)
-        loss = 1
         adjust_learning_rate(optimizer,epoch)
+        # print('learning rate now:', get_learning_rate(optimizer))
         loss, err = train(train_loader,net,criterion,optimizer,epoch+1)
         # optimizer = optimizer_rms if loss > 0.0015 else optimizer_sgd
         # remember best acc and save checkpoint
@@ -129,6 +128,8 @@ def main(net, full = False):
         print('Epoch: [{0}/{1}]  Time [{2}/{3}]'.format(
             epoch+1, args.epochs, datetime.timedelta(seconds=(time() - epoch_start_time)),
                                 datetime.timedelta(seconds=(time() - start_time))))
+
+        path = "checkpoint/checkpoint_{0}_{1}.pth.tar".format(epoch,get_learning_rate(optimizer))
         save_checkpoint({
             'epoch': epoch + 1,
             'arch': '3dHMP',
@@ -136,8 +137,16 @@ def main(net, full = False):
             'best_acc': best_err,
             'optimizer': optimizer.state_dict(),
         }, is_best)
-        if not is_best:
-            lower_learning_rate(optimizer,DECAY_RATIO)
+        if epoch % DECAY_EPOCH == 0:
+            save_checkpoint({
+                'epoch': epoch + 1,
+                'arch': '3dHMP',
+                'state_dict': net.state_dict(),
+                'best_acc': best_err,
+                'optimizer': optimizer.state_dict(),
+            }, is_best, path)
+        # if not is_best:
+        #     lower_learning_rate(optimizer,DECAY_RATIO)
 
     print('Finished Training')
     # print 'evaluating test dataset'
@@ -171,13 +180,14 @@ def train(train_loader, model, criterion, optimizer, epoch):
         output = model(input_var)
         # record loss
         loss = criterion(output[0], target_var)
-        for k in range(1, nSTACK):
+        for k in range(1, nSTACK-1):
             loss += criterion(output[k], target_var)
+        loss += criterion(output[nSTACK-1], target_var[:,:JOINT_LEN,:,:,:])
         losses.update(loss.data[0], batch_size)
 
         # measure accuracy
         k = 1
-        output = output[-1].data.view(batch_size,JOINT_LEN+BONE_LEN, PC_GT_SIZE**3)
+        output = output[-1].data.view(batch_size,JOINT_LEN, PC_GT_SIZE**3)
         output = output[:,:JOINT_LEN,:]
         # output, indices = torch.max(output,dim=2)
         output, indices = torch.topk(output, k, dim=2)
@@ -221,57 +231,54 @@ def test(test_loader, model, criterion, error = accuracy_error_thresh_portion_ba
     # switch to evaluate mode
     model.eval()
     end = time()
-
     result = np.empty(shape=(0,JOINT_POS_LEN),dtype=np.float32)
+
     for i, s in enumerate(test_loader):
-        if len(s) == 3:
-            tsdf, target, max_l = s
-        else:
-            tsdf, target, max_l, mid_p = s
-            mid_p = mid_p.unsqueeze(1)
-        max_l = max_l.unsqueeze(1)
-        if USE_SENSOR:
-            tsdf, angles = tsdf
-            input_sensor_var = torch.autograd.Variable(angles.cuda())
-        batch_size = tsdf.size(0)
-        tsdf = tsdf[:, 2, :, :, :].unsqueeze(1).cuda()
-
-        # normalize target to [0,1]
-        n_target = ((target.view(batch_size, -1, 3) - mid_p).view(batch_size,-1)) / max_l + 0.5
-        n_target[n_target < 0] = 0
-        n_target[n_target >= 1] = 1
-
-        input_var = torch.autograd.Variable(tsdf)
-        target_var = torch.autograd.Variable(n_target.cuda())
-
-
-        # compute output
-        if USE_SENSOR:
-            output = model((input_var, input_sensor_var))
-        else:
-            output = model(input_var)
-
-        # loss calcu
-        loss = criterion(output, target_var)
+        data, heatmaps, label, param = s
+        batch_size = data.size(0)
+        input_var = torch.autograd.Variable(data.unsqueeze(1).cuda())
+        target_var = torch.autograd.Variable(heatmaps.cuda())
+        output = model(input_var)
+        # record loss
+        loss = criterion(output[0], target_var)
+        for k in range(1, nSTACK - 1):
+            loss += criterion(output[k], target_var)
+        loss += criterion(output[nSTACK - 1], target_var[:, :JOINT_LEN, :, :, :])
         losses.update(loss.data[0], batch_size)
 
         # measure accuracy
-        output = ((output.data.cpu() - 0.5) * max_l).view(batch_size,-1,3) + mid_p
-        output = output.view(batch_size,-1)
-        err_t = error(output, target)
+        k = 1
+        output = output[-1].data.view(batch_size, JOINT_LEN, PC_GT_SIZE ** 3)
+        output = output[:, :JOINT_LEN, :]
+        # output, indices = torch.max(output,dim=2)
+        output, indices = torch.topk(output, k, dim=2)
+        indices = indices.unsqueeze(-1)
+        indices_3d = torch.FloatTensor(batch_size, JOINT_LEN, k, 3)
+        indices_3d[:, :, :, 0] = indices.div(PC_GT_SIZE ** 2)
+        indices_3d[:, :, :, 1] = indices.remainder(PC_GT_SIZE ** 2).div(PC_GT_SIZE)
+        indices_3d[:, :, :, 2] = indices.remainder(PC_GT_SIZE)
+        indices_3d = indices_3d.view(batch_size, -1)
+        param[1] = param[1].unsqueeze(1) * PC_SIZE / PC_GT_SIZE
+        indices_3d = indices_3d.mul(param[1].repeat(1, JOINT_LEN * 3 * k)).add(param[0].repeat(1, JOINT_LEN * k)).view(
+            batch_size, JOINT_LEN, k, 3)
+        err_t = mean_error_heatmap3d_topk(indices_3d, label)
+        # print err_t
         errors.update(err_t, batch_size)
-
         # measure elapsed time
         batch_time.update(time() - end)
         end = time()
-        if i % PRINT_FREQ == 0:
-            # print mean_errs.avg.cpu().numpy()
-            print('Test: [{0}/{1}]\t'
+
+        if i % args.print_freq == 0:
+            print('[{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                  'Loss {loss.val:.5f} ({loss.avg:.5f})\t'
                   'acc_in_t {err_t.val:.3f} ({err_t.avg:.3f})'.format(
-                   i, len(test_loader), batch_time=batch_time,
-                   loss=losses, err_t=errors))
+                i, len(test_loader), batch_time=batch_time,
+                loss=losses, err_t=errors))
+
+
+        # measure accuracy
+        output = indices_3d[:,:,0,:].view(batch_size,-1)
         result = np.append(result, output.numpy(), axis=0)
     return result, errors.avg
 
@@ -279,7 +286,7 @@ def test(test_loader, model, criterion, error = accuracy_error_thresh_portion_ba
 def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR"""
     lr = args.learning_rate * (DECAY_RATIO ** (epoch // DECAY_EPOCH))
-    print ('Learning rate :',lr)
+    print ('adjust Learning rate :',lr)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -295,6 +302,13 @@ def lower_learning_rate(optimizer, ratio):
     for param_group in optimizer.param_groups:
         param_group['lr'] *= ratio
     print ('acc up, adjust learning rate to ', param_group['lr'])
+
+
+def get_learning_rate(optimizer):
+    lr = 0
+    for param_group in optimizer.param_groups:
+        lr = param_group['lr']
+    return lr
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
@@ -376,12 +390,12 @@ def camera2pixel(x, fx, fy, ux, uy):
     return x
 
 
-def test_only(model_path, error = accuracy_error_thresh_portion_batch, test_id = 0, save2file = False, world_coor=True):
+def test_only(net, model_path, error = accuracy_error_thresh_portion_batch, test_id = 0, save2file = False, world_coor=True):
     start_time = time()
     # warning_init()
-    net = HandNet()
     net.cuda()
-    dataset = MSRADataSet(DATA_DIR)
+    dataset = MSRADataSet3D(DATA_DIR)
+    dataset.data_augmentation = False
     criterion = nn.MSELoss().cuda()
     checkpoint = torch.load(model_path)
     best_acc = checkpoint['best_acc']
@@ -391,7 +405,8 @@ def test_only(model_path, error = accuracy_error_thresh_portion_batch, test_id =
 
     if test_id != -1:
         train_idx, test_idx = dataset.get_train_test_indices(test_id)
-        test_sampler = SubsetRandomSampler(test_idx)
+        test_sampler = SubsetRandomSampler(train_idx)
+        # test_sampler = SubsetRandomSampler(test_idx)
         test_loader = torch.utils.data.DataLoader(dataset,
                                                batch_size=BATCH_SIZE, sampler=test_sampler,
                                                num_workers=0)
@@ -401,7 +416,7 @@ def test_only(model_path, error = accuracy_error_thresh_portion_batch, test_id =
                                                   num_workers=0)
     r, acc = test(test_loader, net, criterion, error=error)
     print( "final accuracy {:3f}".format(acc))
-    print( "total time: ", datetime.timedelta(seconds=(time() - start_time)))
+    print( "total time: ", datetime.timedelta(seconds=(time() - start_time)).seconds,'s')
     if type(save2file) is str:
         if world_coor:
             np.savetxt(save2file, r,fmt = '%.3f')
@@ -440,7 +455,23 @@ def preprocessing():
     print('Finished Preprocessing')
 
 
+class Logger:
+    def __init__(self, stream, file_s):
+        self.stream = stream
+        self.file_stream = file_s
+
+    def write(self, data):
+        self.stream.write(data)
+        self.stream.flush()
+        self.file_stream.write(data)  # Write the data of stdout here to a text file as well
+        self.file_stream.flush()
+
+
 if __name__ == "__main__":
+    path = 'results/'+str(datetime.datetime.now())+'.log'
+    f = open(path,'w')
+    sys.stdout = Logger(sys.stdout,f)
+
     # m = torch.FloatTensor([[[1, 2, 3], [4, 5, 6]],
     #                        [[1, 2, 3], [4, 5, 6]],
     #                       [[1, 2, 3], [4, 5, 6]],
@@ -471,8 +502,11 @@ if __name__ == "__main__":
     # print output
 
     # preprocessing()
+    init_parser()
     net = Hourglass3DNet(nSTACK,nModule,nFEAT)
     main(net, False)
+
+    # test_only(net, 'model_best.pth.tar', test_id=0)
     # test_only('model_best.pth.tar', mean_error, 0)
     # path = '/home/hfy/code/awesome-hand-pose-estimation/evaluation/results/msra/result.txt'
     # test_only('model_best.pth.tar',test_id=-1, error=mean_error, save2file=path, world_coor=False)

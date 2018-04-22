@@ -109,17 +109,19 @@ class Hourglass3DNet(nn.Module):
             lin = nn.Sequential(nn.Conv3d(self.nFeats, self.nFeats, bias=True, kernel_size=1, stride=1),
                                 nn.BatchNorm3d(self.nFeats), self.relu)
             _lin_.append(lin)
-            _tmpOut.append(nn.Conv3d(self.nFeats, JOINT_LEN+BONE_LEN, bias=True, kernel_size=1, stride=1))
             if i < self.nStack - 1:
+                _tmpOut.append(nn.Conv3d(self.nFeats, JOINT_LEN+BONE_LEN, bias=True, kernel_size=1, stride=1))
                 _ll_.append(nn.Conv3d(self.nFeats, self.nFeats, bias=True, kernel_size=1, stride=1))
                 _tmpOut_.append(nn.Conv3d(JOINT_LEN+BONE_LEN, self.nFeats, bias=True, kernel_size=1, stride=1))
+            else:
+                _tmpOut.append(nn.Conv3d(self.nFeats, JOINT_LEN, bias=True, kernel_size=1, stride=1))
 
         self.hourglass = nn.ModuleList(_hourglass)
         self.Residual = nn.ModuleList(_Residual)
         self.lin_ = nn.ModuleList(_lin_)
-        self.tmpOut = nn.ModuleList(_tmpOut)
+        self.interOut = nn.ModuleList(_tmpOut)
         self.ll_ = nn.ModuleList(_ll_)
-        self.tmpOut_ = nn.ModuleList(_tmpOut_)
+        self.interOut2HG = nn.ModuleList(_tmpOut_)
 
     def forward(self, x):
         x = self.conv1_(x)
@@ -129,7 +131,6 @@ class Hourglass3DNet(nn.Module):
         # x = self.maxpool(x)
         x = self.r4(x)
         x = self.r5(x)
-
         out = []
 
         for i in range(self.nStack):
@@ -138,13 +139,12 @@ class Hourglass3DNet(nn.Module):
             for j in range(self.nModules):
                 ll = self.Residual[i * self.nModules + j](ll)
             ll = self.lin_[i](ll)
-            tmpOut = self.tmpOut[i](ll)
+            tmpOut = self.interOut[i](ll)
             out.append(tmpOut)
             if i < self.nStack - 1:
                 ll_ = self.ll_[i](ll)
-                tmpOut_ = self.tmpOut_[i](tmpOut)
+                tmpOut_ = self.interOut2HG[i](tmpOut)
                 x = x + ll_ + tmpOut_
-
         return out
 
         # print HourglassNet(1,1,256)
